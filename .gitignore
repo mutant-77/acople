@@ -7,3 +7,11 @@ build/
 .ruff_cache/
 *.db
 .env
+
+# Coverage
+.coverage
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.cache
