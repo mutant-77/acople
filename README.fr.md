@@ -1,0 +1,175 @@
+<p align="center">
+  <img src="img/header.png" alt="Header">
+</p>
+
+<h1 align="center">Acople</h1>
+
+<p align="center">
+  Le moyen le plus simple de connecter votre application à un Agent IDE et de l'utiliser comme moteur.
+</p>
+
+Languages: [Español](README.es.md) | [English](README.md) | [Français](README.fr.md)
+
+---
+
+## Pour qui est-ce ? 👀
+
+Pour **vous** qui :
+- Voulez utiliser Claude Code, Gemini, OpenCode, ou tout autre agent depuis votre application.
+- Ne voulez pas vous casser la tête avec des configurations complexes.
+- Voulez quelque chose qui **fonctionne**, tout simplement.
+
+---
+
+## Démarrage Rapide ⚡ (en 30 secondes)
+
+```bash
+# 1. Installez
+pip install acople[server]
+
+# 2. Démarrez le serveur
+uvicorn acople.server:app --port 8000
+```
+
+C'est prêt ! Vous pouvez maintenant utiliser l'agent depuis votre application.
+
+---
+
+## Utilisation basique 📦
+
+```python
+from acople import Acople
+
+# Détecte automatiquement votre agent - aucune configuration nécessaire
+bridge = Acople()
+
+# Envoyez un prompt et recevez la réponse
+async for event in bridge.run("Bonjour, qui es-tu ?"):
+    print(event.data.get("text"), end="")
+```
+
+Ou si vous préférez utiliser le serveur HTTP :
+
+```bash
+# La méthode la plus simple
+curl -X POST http://localhost:8000/chat/simple \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "crée un hello world en python"}'
+```
+
+---
+
+## Sécurité et Concurrence 🛡️ (NOUVEAU)
+
+Acople est maintenant prêt pour la production. Vous pouvez configurer ces variables d'environnement :
+
+- `ACOPLE_API_KEY` : Définissez une clé secrète pour protéger vos endpoints (ex. `export ACOPLE_API_KEY="mon_secret"`). Puis passez-la dans l'en-tête `X-API-Key`.
+- `ACOPLE_MAX_CONCURRENT` : Limite de sessions simultanées pour ne pas saturer votre ordinateur (par défaut `5`).
+- `ACOPLE_CORS_ORIGINS` : Contrôlez qui peut accéder à votre API (par défaut `http://localhost:*`).
+
+---
+
+## API Endpoints 🌐
+
+| Endpoint | Ce qu'il fait | Quand l'utiliser |
+|----------|---------|--------------|
+| `POST /chat/simple` | Passez juste le prompt | Pour quelque chose de rapide et facile ✅ |
+| `POST /chat` | Avec plus d'options | Quand vous avez besoin de plus de contrôle (ex. cwd, timeouts) |
+| `GET /agents` | Liste les agents installés | Pour voir ce qui est disponible |
+| `GET /models` | Liste les modèles de l'agent | Pour choisir un modèle spécifique |
+| `GET /health` | Le serveur est-il en vie ? | Vérification rapide de l'état |
+| `POST /interrupt` | Annule ce qui est en cours d'exécution | Pour arrêter une session ou toutes |
+
+---
+
+## Vous n'avez pas d'agent installé ? 🤔
+
+Pas de soucis, installez-en un simplement :
+
+```bash
+# Choisissez celui que vous voulez :
+
+# Claude Code (le plus populaire)
+npm i -g @anthropic-ai/claude-code
+
+# Gemini CLI (gratuit)
+npm i -g @google/gemini-cli
+
+# OpenCode (open source)
+npm i -g opencode
+
+# Codex CLI
+npm i -g @openai/codex
+```
+
+---
+
+## Vérifiez que tout va bien 🛠️
+
+```bash
+python -m acople.cli doctor
+```
+
+Il vous dit si tout est installé et fonctionnel.
+
+---
+
+## Erreurs utiles 💪
+
+Si quelque chose échoue, Acople vous dit **exactement quoi faire** :
+
+```text
+# Avant (générique et confus)
+Error: "L'agent n'est pas dans PATH"
+
+# Après (clair)
+Error: Claude n'est pas installé
+→ Exécutez: npm i -g @anthropic-ai/claude-code
+```
+
+---
+
+## Ce que vous pouvez faire 🎯
+
+Avec Acople, vous pouvez créer :
+
+- Votre propre **assistant de codage** personnel
+- **Revue de code** automatique
+- Générateur de **tests**
+- **Débogueur** intelligent
+- Tout ce qui **vous passe par la tête** ✨
+
+---
+
+## Prérequis 📋
+
+- Python 3.10+
+- Au moins 1 agent CLI installé (parmi : `claude`, `gemini`, `opencode`, `codex`, `qwen`)
+
+---
+
+## Exemple complet 💻
+
+```python
+# client.py - votre application qui utilise l'agent
+import httpx
+import json
+
+def chat(prompt):
+    with httpx.Client() as client:
+        # N'oubliez pas de passer la clé API si vous l'avez configurée !
+        headers = {"X-API-Key": "mon_secret"} 
+        with client.stream("POST", "http://localhost:8000/chat", json={"prompt": prompt}, headers=headers) as r:
+            for line in r.iter_lines():
+                if line.startswith("data: "):
+                    event = json.loads(line[6:])
+                    if event["type"] == "token":
+                        print(event.get("text", ""), end="")
+
+# Utilisez-le !
+chat("crée un bouton en HTML qui dit 'Clique-moi'")
+```
+
+---
+
+MIT License
