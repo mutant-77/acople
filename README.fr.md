@@ -21,6 +21,25 @@ Pour **vous** qui :
 
 ---
 
+## Pourquoi Acople ? 🚀
+
+### Agent vs Modèle
+Acople ne se contente pas d'appeler une API de texte ; il appelle un **Agent** avec des "mains" (outils, navigation web, accès au système de fichiers). Alors qu'une API LLM n'est qu'un "cerveau" dans un bac à sable, Acople donne à ce cerveau la capacité d'agir sur votre environnement local.
+
+### Pont & Normalisation
+Arrêtez de vous battre avec différents drapeaux CLI et des formats de sortie incohérents. Acople offre une **interface unifiée** pour Claude Code, Gemini et les autres. Un seul format pour les gouverner tous.
+
+### Votre terminal en tant qu'API
+Comme vous ne pouvez pas exécuter de commandes CLI depuis un navigateur web ou une application mobile, le composant serveur d'Acople agit comme un **pont sécurisé**, exposant vos agents locaux via HTTP/SSE.
+
+### Streaming en Temps Réel
+Acople gère l'analyse complexe des flux de terminaux, vous donnant des jetons (tokens) propres en temps réel. C'est la différence entre une application figée et une expérience interactive.
+
+### Prêt pour la Production
+Contrôle de **concurrence intégré**, gestion du cycle de vie des processus et authentification par clé API.
+
+---
+
 ## Démarrage Rapide ⚡ (en 30 secondes)
 
 ```bash
