@@ -516,6 +516,9 @@
             case 'error':
                 appendMessage(`\n[ERROR] ${event.message}`, 'error');
                 break;
+            case 'system':
+                appendMessage(`\n[System Output]\n${event.message}\n`, 'system');
+                break;
         }
     }
 

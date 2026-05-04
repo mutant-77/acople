@@ -30,6 +30,7 @@ class EventType(str, Enum):
     TOOL_RESULT = "tool_result"
     DONE = "done"
     ERROR = "error"
+    SYSTEM = "system"
 
 
 @dataclass
@@ -492,7 +493,12 @@ class Acople:
             if stderr_bytes:
                 stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
                 if stderr:
-                    yield BridgeEvent(EventType.ERROR, {"message": stderr})
+                    # Esperar a que el proceso termine para ver si fue un error real o solo logs
+                    await proc.wait()
+                    if proc.returncode != 0:
+                        yield BridgeEvent(EventType.ERROR, {"message": stderr})
+                    else:
+                        yield BridgeEvent(EventType.SYSTEM, {"message": stderr})
 
         yield BridgeEvent(EventType.DONE, {})
 
