@@ -15,3 +15,21 @@ nosetests.xml
 coverage.xml
 *.cover
 .cache
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+.env/
+
+# Entornos de desarrollo / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# SO / Archivos de sistema
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini

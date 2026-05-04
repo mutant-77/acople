@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "acople"
-version = "1.0.0"
+version = "1.1.0"
 description = "Universal bridge to IDE AI agents (Claude Code, Gemini CLI, Codex, OpenCode, etc)"
 readme = "README.md"
 license = "MIT"

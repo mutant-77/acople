@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -63,7 +64,7 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
     ),
     "gemini": AgentConfig(
         bin="gemini",
-        args=["--no-color"],
+        args=["--skip-trust"],
         prompt_flag="-p",
         stream_format="plain",
     ),
@@ -211,6 +212,67 @@ AGENT_INSTALL_HINTS = {
     "qwen": "pip install qwen-agent",
 }
 
+class AsyncProcessProxy:
+    """Fallback proxy to read subprocess streams in threads for Windows SelectorEventLoop."""
+    def __init__(self, proc):
+        import asyncio
+        self.proc = proc
+        self.pid = proc.pid
+        self.returncode = None
+        self.stdout_queue = asyncio.Queue()
+        self.stderr_queue = asyncio.Queue()
+        self.loop = asyncio.get_running_loop()
+        
+        self._t_out = threading.Thread(target=self._reader, args=(self.proc.stdout, self.stdout_queue))
+        self._t_err = threading.Thread(target=self._reader, args=(self.proc.stderr, self.stderr_queue))
+        self._t_out.daemon = True
+        self._t_err.daemon = True
+        self._t_out.start()
+        self._t_err.start()
+
+    def _reader(self, pipe, queue):
+        try:
+            while True:
+                chunk = pipe.read1(4096)
+                if not chunk:
+                    break
+                self.loop.call_soon_threadsafe(queue.put_nowait, chunk)
+        except Exception:
+            pass
+        finally:
+            self.loop.call_soon_threadsafe(queue.put_nowait, b"")
+            
+    async def wait(self):
+        import asyncio
+        def _wait():
+            self.proc.wait()
+            return self.proc.returncode
+        self.returncode = await asyncio.to_thread(_wait)
+        return self.returncode
+        
+    def terminate(self):
+        self.proc.terminate()
+        
+    def kill(self):
+        self.proc.kill()
+        
+    def send_signal(self, sig):
+        self.proc.send_signal(sig)
+        
+    class _StreamProxy:
+        def __init__(self, queue):
+            self.queue = queue
+        async def read(self, n=None):
+            return await self.queue.get()
+            
+    @property
+    def stdout(self):
+        return self._StreamProxy(self.stdout_queue)
+        
+    @property
+    def stderr(self):
+        return self._StreamProxy(self.stderr_queue)
+
 
 # ---------------------------------------------------------------------------
 # Bridge principal
@@ -274,6 +336,10 @@ class Acople:
         else:
             cmd.append(prompt)
 
+        # On Windows, executing .cmd or .bat directly can fail with WinError 193
+        if os.name == 'nt' and (bin_cmd.lower().endswith('.cmd') or bin_cmd.lower().endswith('.bat')):
+            cmd = ["cmd.exe", "/c"] + cmd
+
         return cmd
 
     async def run(
@@ -293,18 +359,34 @@ class Acople:
             work_dir = Path(cwd) if cwd else Path.cwd()
 
             logger.info(f"Starting agent: {self.agent_name}")
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=work_dir,
-            )
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=work_dir,
+                )
+            except NotImplementedError:
+                # Robust fallback for Windows SelectorEventLoop
+                import subprocess
+                creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
+                raw_proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    cwd=work_dir,
+                    creationflags=creationflags
+                )
+                proc = AsyncProcessProxy(raw_proc)
+
             if on_start:
                 on_start(proc)
             logger.info(f"PID: {proc.pid}")
         except Exception as e:
-            logger.error(f"Failed to start: {e}")
-            yield BridgeEvent(EventType.ERROR, {"message": f"Failed to start: {e}"})
+            import traceback
+            err_details = traceback.format_exc()
+            logger.error(f"Failed to start: {err_details}")
+            yield BridgeEvent(EventType.ERROR, {"message": f"Failed to start: {repr(e)}"})
             return
 
         try:

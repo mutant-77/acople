@@ -97,7 +97,20 @@ Acople is now production-ready. You can configure these environment variables:
 | `GET /agents` | Lists installed agents | To see what's available |
 | `GET /models` | Lists agent models | To choose a specific model |
 | `GET /health` | Is the server alive? | Quick status check |
+| `GET /ui` | Built-in web interface | To test your agents directly from the browser 🖥️ |
 | `POST /interrupt` | Cancels what is running | To stop one session or all of them |
+
+---
+
+## Built-in Test UI 🖥️
+
+Acople comes with a modern, ready-to-use web interface to test your agents, check connection status, and run diagnostics.
+
+Just start your server:
+```bash
+uvicorn acople.server:app --port 8000
+```
+And open in your browser: **`http://localhost:8000/ui`**
 
 ---
 

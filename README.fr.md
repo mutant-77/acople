@@ -97,7 +97,20 @@ Acople est maintenant prêt pour la production. Vous pouvez configurer ces varia
 | `GET /agents` | Liste les agents installés | Pour voir ce qui est disponible |
 | `GET /models` | Liste les modèles de l'agent | Pour choisir un modèle spécifique |
 | `GET /health` | Le serveur est-il en vie ? | Vérification rapide de l'état |
+| `GET /ui` | Interface web intégrée | Pour tester vos agents directement depuis le navigateur 🖥️ |
 | `POST /interrupt` | Annule ce qui est en cours d'exécution | Pour arrêter une session ou toutes |
+
+---
+
+## Interface de Test Intégrée 🖥️
+
+Acople est livré avec une interface web moderne prête à l'emploi pour tester vos agents, vérifier l'état de la connexion et exécuter des diagnostics.
+
+Démarrez simplement votre serveur :
+```bash
+uvicorn acople.server:app --port 8000
+```
+Et ouvrez dans votre navigateur : **`http://localhost:8000/ui`**
 
 ---
 

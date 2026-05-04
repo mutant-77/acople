@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acople Test Interface</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --success: #10b981;
+            --error: #ef4444;
+            --font-main: 'Inter', -apple-system, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--font-main);
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+            padding: 2rem;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            gap: 2rem;
+        }
+
+        header {
+            grid-column: 1 / -1;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            background: linear-gradient(to right, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .panel-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: var(--text);
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        input, select, textarea {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 0.75rem;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 0.95rem;
+            transition: border-color 0.2s;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        button:hover {
+            background: var(--primary-hover);
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button.danger {
+            background: var(--error);
+        }
+
+        button.danger:hover {
+            background: #dc2626;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.5rem;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--error);
+            margin-right: 8px;
+        }
+
+        .status-indicator.online {
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+        }
+
+        .badge {
+            background: var(--border);
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.9rem;
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .chat-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 120px);
+        }
+
+        .messages {
+            flex-grow: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            overflow-y: auto;
+            margin-bottom: 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            line-height: 1.6;
+        }
+
+        .token { color: #e2e8f0; }
+        .system { color: var(--text-muted); font-style: italic; }
+        .error { color: #fca5a5; }
+        .event-label { color: #93c5fd; font-weight: bold; }
+
+        .diagnostics-btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+        .diagnostics-btn:hover {
+            background: var(--border);
+        }
+        
+        .endpoints-list {
+            margin-top: 1rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+        
+        .endpoints-list div {
+            margin-bottom: 0.3rem;
+            font-family: monospace;
+        }
+
+        .endpoint-method {
+            color: var(--primary);
+            font-weight: bold;
+            margin-right: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Acople Interface</h1>
+        <div id="connection-status">
+            <span class="status-indicator" id="status-dot"></span>
+            <span id="status-text">Disconnected</span>
+        </div>
+    </header>
+
+    <div class="sidebar">
+        <div class="panel">
+            <h2 class="panel-title">Configuration</h2>
+            <div class="form-group">
+                <label>Server URL</label>
+                <input type="text" id="server-url" value="http://localhost:8000">
+            </div>
+            <div class="form-group">
+                <label>API Key (Optional)</label>
+                <input type="password" id="api-key" placeholder="Enter API Key">
+            </div>
+            <button id="connect-btn">Check Connection</button>
+        </div>
+
+        <div class="panel" style="margin-top: 1rem;">
+            <h2 class="panel-title">System Status</h2>
+            <div id="system-info">
+                <div class="info-row">
+                    <span>Active Agent</span>
+                    <span class="badge" id="info-agent">Unknown</span>
+                </div>
+            </div>
+            <button class="diagnostics-btn" id="diagnostics-btn" style="margin-top: 1rem;">Run Diagnostics</button>
+            
+            <div class="endpoints-list">
+                <div style="color: var(--text); margin-bottom:0.5rem">Available Endpoints:</div>
+                <div><span class="endpoint-method">GET</span> /agents</div>
+                <div><span class="endpoint-method">GET</span> /models</div>
+                <div><span class="endpoint-method">GET</span> /detect</div>
+                <div><span class="endpoint-method">GET</span> /diagnose</div>
+                <div><span class="endpoint-method">POST</span> /chat</div>
+                <div><span class="endpoint-method">POST</span> /chat/simple</div>
+                <div><span class="endpoint-method">POST</span> /interrupt</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content chat-container">
+        <div class="panel" style="flex-grow: 1; display: flex; flex-direction: column;">
+            <h2 class="panel-title">Console Output</h2>
+            <div class="messages" id="messages"></div>
+
+            <div class="form-group" style="margin-bottom: 0.5rem;">
+                <div style="display:flex; gap: 1rem;">
+                    <div style="flex:1;">
+                         <label>Agent (Override)</label>
+                         <select id="agent-select">
+                             <option value="">Default (Auto)</option>
+                         </select>
+                    </div>
+                    <div style="flex:1;">
+                        <label>Endpoint</label>
+                         <select id="endpoint-select">
+                             <option value="/chat">/chat (Full)</option>
+                             <option value="/chat/simple">/chat/simple</option>
+                         </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>System Prompt (Optional, /chat only)</label>
+                <input type="text" id="system-prompt" placeholder="You are a helpful assistant...">
+            </div>
+
+            <div class="form-group" style="margin-top: 0.5rem;">
+                <label>Prompt</label>
+                <textarea id="prompt-input" placeholder="Type your prompt here..."></textarea>
+            </div>
+
+            <div class="button-group">
+                <button id="send-btn">Send Request</button>
+                <button id="interrupt-btn" class="danger">Interrupt</button>
+                <button id="clear-btn" class="diagnostics-btn">Clear</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const state = {
+        controller: null,
+        isGenerating: false
+    };
+
+    const els = {
+        serverUrl: document.getElementById('server-url'),
+        apiKey: document.getElementById('api-key'),
+        connectBtn: document.getElementById('connect-btn'),
+        statusDot: document.getElementById('status-dot'),
+        statusText: document.getElementById('status-text'),
+        infoAgent: document.getElementById('info-agent'),
+        agentSelect: document.getElementById('agent-select'),
+        endpointSelect: document.getElementById('endpoint-select'),
+        diagnosticsBtn: document.getElementById('diagnostics-btn'),
+        messages: document.getElementById('messages'),
+        systemPrompt: document.getElementById('system-prompt'),
+        promptInput: document.getElementById('prompt-input'),
+        sendBtn: document.getElementById('send-btn'),
+        interruptBtn: document.getElementById('interrupt-btn'),
+        clearBtn: document.getElementById('clear-btn')
+    };
+
+    function appendMessage(text, type = 'token') {
+        const span = document.createElement('span');
+        span.className = type;
+        if (type === 'event') {
+            span.innerHTML = `<br><span class="event-label">[${text}]</span> `;
+        } else if (type === 'system') {
+            span.textContent = text + '\n';
+        } else {
+            span.textContent = text;
+        }
+        els.messages.appendChild(span);
+        els.messages.scrollTop = els.messages.scrollHeight;
+    }
+
+    function getHeaders() {
+        const headers = { 'Content-Type': 'application/json' };
+        const key = els.apiKey.value.trim();
+        if (key) headers['X-API-Key'] = key;
+        return headers;
+    }
+
+    async function checkConnection() {
+        const url = els.serverUrl.value.replace(/\/$/, '') + '/health';
+        try {
+            const res = await fetch(url, { headers: getHeaders() });
+            if (res.ok) {
+                const data = await res.json();
+                els.statusDot.classList.add('online');
+                els.statusText.textContent = 'Connected';
+                els.infoAgent.textContent = data.agent || 'None';
+                appendMessage(`[System] Connected to server. Active agent: ${data.agent}`, 'system');
+                await loadAgents();
+            } else {
+                throw new Error(`HTTP ${res.status}`);
+            }
+        } catch (e) {
+            els.statusDot.classList.remove('online');
+            els.statusText.textContent = 'Disconnected';
+            els.infoAgent.textContent = 'Unknown';
+            appendMessage(`[System Error] Failed to connect: ${e.message}`, 'error');
+        }
+    }
+
+    async function loadAgents() {
+        const url = els.serverUrl.value.replace(/\/$/, '') + '/agents';
+        try {
+            const res = await fetch(url, { headers: getHeaders() });
+            if (res.ok) {
+                const data = await res.json();
+                els.agentSelect.innerHTML = '<option value="">Default (Auto)</option>';
+                for (const [agent, available] of Object.entries(data.agents)) {
+                    if (available) {
+                        const opt = document.createElement('option');
+                        opt.value = agent;
+                        opt.textContent = agent;
+                        els.agentSelect.appendChild(opt);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load agents", e);
+        }
+    }
+
+    async function runDiagnostics() {
+        const url = els.serverUrl.value.replace(/\/$/, '') + '/diagnose';
+        appendMessage(`\n[System] Running diagnostics on ${url}...`, 'system');
+        try {
+            const res = await fetch(url, { headers: getHeaders() });
+            const data = await res.json();
+            appendMessage(JSON.stringify(data, null, 2), 'system');
+        } catch (e) {
+            appendMessage(`[Error] Diagnostics failed: ${e.message}`, 'error');
+        }
+    }
+
+    async function sendPrompt() {
+        const prompt = els.promptInput.value.trim();
+        if (!prompt) return;
+
+        if (state.isGenerating) {
+            appendMessage(`[System] Already generating...`, 'system');
+            return;
+        }
+
+        const baseUrl = els.serverUrl.value.replace(/\/$/, '');
+        const endpoint = els.endpointSelect.value;
+        const url = baseUrl + endpoint;
+
+        const payload = { prompt };
+        if (endpoint === '/chat') {
+            const sysPrompt = els.systemPrompt.value.trim();
+            if (sysPrompt) payload.system = sysPrompt;
+            
+            const agent = els.agentSelect.value;
+            if (agent) payload.agent = agent;
+        }
+
+        appendMessage(`\n--- Request to ${endpoint} ---\n`, 'system');
+        els.promptInput.value = '';
+        state.isGenerating = true;
+        els.sendBtn.textContent = 'Generating...';
+        els.sendBtn.disabled = true;
+
+        state.controller = new AbortController();
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify(payload),
+                signal: state.controller.signal
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({}));
+                throw new Error(`HTTP ${response.status} - ${err.detail || 'Unknown error'}`);
+            }
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            handleEvent(data);
+                        } catch (e) {
+                            console.error("Parse error", e, line);
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            if (e.name !== 'AbortError') {
+                appendMessage(`[Error] ${e.message}`, 'error');
+            }
+        } finally {
+            state.isGenerating = false;
+            els.sendBtn.textContent = 'Send Request';
+            els.sendBtn.disabled = false;
+            state.controller = null;
+        }
+    }
+
+    function handleEvent(event) {
+        switch (event.type) {
+            case 'token':
+                if (event.text) appendMessage(event.text, 'token');
+                break;
+            case 'tool_use':
+                appendMessage(`TOOL_USE: ${event.tool}\n`, 'event');
+                if (event.input) appendMessage(JSON.stringify(event.input, null, 2) + '\n', 'system');
+                break;
+            case 'tool_result':
+                appendMessage(`TOOL_RESULT`, 'event');
+                break;
+            case 'done':
+                appendMessage(`\n[DONE]`, 'event');
+                break;
+            case 'error':
+                appendMessage(`\n[ERROR] ${event.message}`, 'error');
+                break;
+        }
+    }
+
+    async function interruptGeneration() {
+        if (!state.isGenerating) return;
+        
+        appendMessage(`\n[System] Sending interrupt...`, 'system');
+        const url = els.serverUrl.value.replace(/\/$/, '') + '/interrupt';
+        
+        try {
+            await fetch(url, { method: 'POST', headers: getHeaders() });
+            // Don't abort fetch immediately, let the SSE stream close naturally or handle the done event
+        } catch (e) {
+            appendMessage(`[Error] Interrupt failed: ${e.message}`, 'error');
+        }
+    }
+
+    // Event Listeners
+    els.connectBtn.addEventListener('click', checkConnection);
+    els.diagnosticsBtn.addEventListener('click', runDiagnostics);
+    els.sendBtn.addEventListener('click', sendPrompt);
+    els.interruptBtn.addEventListener('click', interruptGeneration);
+    els.clearBtn.addEventListener('click', () => { els.messages.innerHTML = ''; });
+    els.promptInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            sendPrompt();
+        }
+    });
+
+    // Initial check
+    setTimeout(checkConnection, 500);
+</script>
+</body>
+</html>

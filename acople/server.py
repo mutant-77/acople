@@ -19,9 +19,12 @@ import sys
 import uuid
 from contextlib import asynccontextmanager
 
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 
 from acople import (
@@ -77,7 +80,7 @@ async def verify_api_key(request: Request):
 app = FastAPI(
     title="Acople",
     description="Universal bridge to IDE AI agents",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
     dependencies=[Depends(verify_api_key)],
 )
@@ -137,6 +140,16 @@ def detect():
         "active": _DEFAULT_AGENT,
         "server": "ok",
     }
+
+
+@app.get("/ui", response_class=HTMLResponse)
+def get_ui():
+    """Sirve la interfaz de pruebas (HTML)."""
+    ui_path = os.path.join(os.path.dirname(__file__), "ui.html")
+    if not os.path.exists(ui_path):
+        raise HTTPException(status_code=404, detail="ui.html not found")
+    with open(ui_path, "r", encoding="utf-8") as f:
+        return f.read()
 
 
 @app.get("/diagnose")
