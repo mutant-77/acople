@@ -5,7 +5,7 @@
 <h1 align="center">Acople</h1>
 
 <p align="center">
-  La forma más fácil de conectar tu app a un Agente IDE y usarlo de motor.
+  Convierte agentes de IA de terminal (como Claude o Gemini) en una API local para tus propias apps.
 </p>
 
 Languages: [Español](README.es.md) | [English](README.md) | [Français](README.fr.md)

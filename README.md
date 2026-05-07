@@ -5,7 +5,7 @@
 <h1 align="center">Acople</h1>
 
 <p align="center">
-  The easiest way to connect your app to an IDE Agent and use it as an engine.
+  Turn terminal AI agents (like Claude or Gemini) into a local API for your own apps.
 </p>
 
 Languages: [Español](README.es.md) | [English](README.md) | [Français](README.fr.md)
