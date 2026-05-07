@@ -33,3 +33,33 @@ def validate_agent_name(name: str | None) -> str | None:
     if not re.match(r"^[a-zA-Z0-9_-]{1,50}$", name):
         raise ValidationError(f"Invalid agent name: {name}")
     return name
+
+
+# ---------------------------------------------------------------------------
+# Image parameter validation (gpt-image-1)
+# ---------------------------------------------------------------------------
+
+_VALID_SIZES = {"1024x1024", "1536x1024", "1024x1536", "auto"}
+_VALID_QUALITIES = {"auto", "low", "medium", "high"}
+_VALID_OUTPUT_FORMATS = {"png", "jpeg", "webp"}
+
+def validate_image_size(size: str) -> str:
+    if size not in _VALID_SIZES:
+        raise ValidationError(f"Invalid size '{size}'. Valid: {', '.join(sorted(_VALID_SIZES))}")
+    return size
+
+def validate_image_quality(quality: str) -> str:
+    if quality not in _VALID_QUALITIES:
+        raise ValidationError(f"Invalid quality '{quality}'. Valid: {', '.join(sorted(_VALID_QUALITIES))}")
+    return quality
+
+def validate_image_n(n: int) -> int:
+    if not 1 <= n <= 10:
+        raise ValidationError(f"n must be between 1 and 10, got {n}")
+    return n
+
+def validate_image_output_format(fmt: str) -> str:
+    if fmt not in _VALID_OUTPUT_FORMATS:
+        raise ValidationError(f"Invalid output_format '{fmt}'. Valid: {', '.join(sorted(_VALID_OUTPUT_FORMATS))}")
+    return fmt
+

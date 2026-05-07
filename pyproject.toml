@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "acople"
-version = "1.1.0"
+version = "1.2.0"
 description = "Universal bridge to IDE AI agents (Claude Code, Gemini CLI, Codex, OpenCode, etc)"
 readme = "README.md"
 license = "MIT"
 authors = [
     { name = "Acople", email = "hello@acople.dev" }
 ]
-keywords = ["ai", "agent", "claude", "opencode", "codex", "gemini", "bridge", "connector"]
+keywords = ["ai", "agent", "claude", "opencode", "codex", "gemini", "bridge", "connector", "image-generation", "openai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

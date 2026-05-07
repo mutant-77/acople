@@ -228,6 +228,40 @@
             font-weight: bold;
             margin-right: 0.5rem;
         }
+
+        .tabs { display: flex; gap: 0; margin-bottom: 1rem; }
+        .tab-btn {
+            flex: 1; padding: 0.6rem 1rem; background: var(--bg); border: 1px solid var(--border);
+            color: var(--text-muted); cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: all 0.2s;
+        }
+        .tab-btn:first-child { border-radius: 8px 0 0 8px; }
+        .tab-btn:last-child { border-radius: 0 8px 8px 0; }
+        .tab-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+        .tab-content { display: none; }
+        .tab-content.active { display: flex; flex-direction: column; flex-grow: 1; }
+
+        .image-gallery {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 1rem; padding: 1rem; overflow-y: auto; flex-grow: 1;
+            background: var(--bg); border: 1px solid var(--border); border-radius: 8px; min-height: 200px;
+        }
+        .image-card {
+            border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface);
+        }
+        .image-card img { width: 100%; display: block; }
+        .image-card .image-actions {
+            padding: 0.5rem; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);
+        }
+        .image-card .image-actions a { color: var(--primary); text-decoration: none; }
+        .image-loading {
+            display: flex; align-items: center; justify-content: center; padding: 3rem;
+            color: var(--text-muted); font-style: italic;
+        }
+        .image-loading .spinner {
+            width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--primary);
+            border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 0.75rem;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -262,6 +296,10 @@
                     <span>Active Agent</span>
                     <span class="badge" id="info-agent">Unknown</span>
                 </div>
+                <div class="info-row">
+                    <span>Image Generation</span>
+                    <span class="badge" id="info-image">Unknown</span>
+                </div>
             </div>
             <button class="diagnostics-btn" id="diagnostics-btn" style="margin-top: 1rem;">Run Diagnostics</button>
             
@@ -273,6 +311,7 @@
                 <div><span class="endpoint-method">GET</span> /diagnose</div>
                 <div><span class="endpoint-method">POST</span> /chat</div>
                 <div><span class="endpoint-method">POST</span> /chat/simple</div>
+                <div><span class="endpoint-method">POST</span> /image/generate</div>
                 <div><span class="endpoint-method">POST</span> /interrupt</div>
             </div>
         </div>
@@ -280,41 +319,83 @@
 
     <div class="main-content chat-container">
         <div class="panel" style="flex-grow: 1; display: flex; flex-direction: column;">
-            <h2 class="panel-title">Console Output</h2>
-            <div class="messages" id="messages"></div>
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="chat">Chat</button>
+                <button class="tab-btn" data-tab="image">Image Generation</button>
+            </div>
 
-            <div class="form-group" style="margin-bottom: 0.5rem;">
-                <div style="display:flex; gap: 1rem;">
-                    <div style="flex:1;">
-                         <label>Agent (Override)</label>
-                         <select id="agent-select">
-                             <option value="">Default (Auto)</option>
-                         </select>
+            <!-- Chat Tab -->
+            <div class="tab-content active" id="tab-chat">
+                <div class="messages" id="messages"></div>
+                <div class="form-group" style="margin-bottom: 0.5rem;">
+                    <div style="display:flex; gap: 1rem;">
+                        <div style="flex:1;">
+                             <label>Agent (Override)</label>
+                             <select id="agent-select">
+                                 <option value="">Default (Auto)</option>
+                             </select>
+                        </div>
+                        <div style="flex:1;">
+                            <label>Endpoint</label>
+                             <select id="endpoint-select">
+                                 <option value="/chat">/chat (Full)</option>
+                                 <option value="/chat/simple">/chat/simple</option>
+                             </select>
+                        </div>
                     </div>
-                    <div style="flex:1;">
-                        <label>Endpoint</label>
-                         <select id="endpoint-select">
-                             <option value="/chat">/chat (Full)</option>
-                             <option value="/chat/simple">/chat/simple</option>
-                         </select>
-                    </div>
+                </div>
+                <div class="form-group">
+                    <label>System Prompt (Optional, /chat only)</label>
+                    <input type="text" id="system-prompt" placeholder="You are a helpful assistant...">
+                </div>
+                <div class="form-group" style="margin-top: 0.5rem;">
+                    <label>Prompt</label>
+                    <textarea id="prompt-input" placeholder="Type your prompt here..."></textarea>
+                </div>
+                <div class="button-group">
+                    <button id="send-btn">Send Request</button>
+                    <button id="interrupt-btn" class="danger">Interrupt</button>
+                    <button id="clear-btn" class="diagnostics-btn">Clear</button>
                 </div>
             </div>
 
-            <div class="form-group">
-                <label>System Prompt (Optional, /chat only)</label>
-                <input type="text" id="system-prompt" placeholder="You are a helpful assistant...">
-            </div>
-
-            <div class="form-group" style="margin-top: 0.5rem;">
-                <label>Prompt</label>
-                <textarea id="prompt-input" placeholder="Type your prompt here..."></textarea>
-            </div>
-
-            <div class="button-group">
-                <button id="send-btn">Send Request</button>
-                <button id="interrupt-btn" class="danger">Interrupt</button>
-                <button id="clear-btn" class="diagnostics-btn">Clear</button>
+            <!-- Image Tab -->
+            <div class="tab-content" id="tab-image">
+                <div class="image-gallery" id="image-gallery"></div>
+                <div class="form-group" style="margin-top: 1rem;">
+                    <div style="display:flex; gap: 1rem;">
+                        <div style="flex:1;">
+                            <label>Size</label>
+                            <select id="img-size">
+                                <option value="auto">Auto</option>
+                                <option value="1024x1024">1024×1024</option>
+                                <option value="1536x1024">1536×1024 (Landscape)</option>
+                                <option value="1024x1536">1024×1536 (Portrait)</option>
+                            </select>
+                        </div>
+                        <div style="flex:1;">
+                            <label>Quality</label>
+                            <select id="img-quality">
+                                <option value="auto">Auto</option>
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                            </select>
+                        </div>
+                        <div style="flex:0.5;">
+                            <label>Count</label>
+                            <input type="number" id="img-n" value="1" min="1" max="10">
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 0.5rem;">
+                    <label>Image Prompt</label>
+                    <textarea id="img-prompt" placeholder="Describe the image you want to generate..."></textarea>
+                </div>
+                <div class="button-group">
+                    <button id="img-generate-btn">Generate Image</button>
+                    <button id="img-clear-btn" class="diagnostics-btn">Clear Gallery</button>
+                </div>
             </div>
         </div>
     </div>
@@ -374,6 +455,9 @@
                 els.statusDot.classList.add('online');
                 els.statusText.textContent = 'Connected';
                 els.infoAgent.textContent = data.agent || 'None';
+                const imgEl = document.getElementById('info-image');
+                imgEl.textContent = data.image_ready ? 'Ready ✓' : 'No API Key';
+                imgEl.style.color = data.image_ready ? 'var(--success)' : 'var(--text-muted)';
                 appendMessage(`[System] Connected to server. Active agent: ${data.agent}`, 'system');
                 await loadAgents();
             } else {
@@ -510,6 +594,9 @@
             case 'tool_result':
                 appendMessage(`TOOL_RESULT`, 'event');
                 break;
+            case 'image':
+                addImageToGallery(event.b64, event.format, event.revised_prompt, event.index);
+                break;
             case 'done':
                 appendMessage(`\n[DONE]`, 'event');
                 break;
@@ -522,6 +609,81 @@
         }
     }
 
+    function addImageToGallery(b64, format, revisedPrompt, index) {
+        const gallery = document.getElementById('image-gallery');
+        const loading = gallery.querySelector('.image-loading');
+        if (loading) loading.remove();
+
+        const card = document.createElement('div');
+        card.className = 'image-card';
+        const img = document.createElement('img');
+        img.src = `data:image/${format};base64,${b64}`;
+        img.alt = revisedPrompt || 'Generated image';
+        card.appendChild(img);
+
+        const actions = document.createElement('div');
+        actions.className = 'image-actions';
+        actions.innerHTML = `<span>#${(index || 0) + 1}</span>`;
+        const dl = document.createElement('a');
+        dl.href = img.src;
+        dl.download = `image_${Date.now()}_${index || 0}.${format}`;
+        dl.textContent = 'Download';
+        actions.appendChild(dl);
+        card.appendChild(actions);
+
+        gallery.prepend(card);
+    }
+
+    async function generateImage() {
+        const prompt = document.getElementById('img-prompt').value.trim();
+        if (!prompt) return;
+
+        const baseUrl = els.serverUrl.value.replace(/\/$/, '');
+        const gallery = document.getElementById('image-gallery');
+
+        const loading = document.createElement('div');
+        loading.className = 'image-loading';
+        loading.innerHTML = '<div class="spinner"></div> Generating image...';
+        gallery.prepend(loading);
+
+        const btn = document.getElementById('img-generate-btn');
+        btn.textContent = 'Generating...';
+        btn.disabled = true;
+
+        try {
+            const res = await fetch(baseUrl + '/image/generate', {
+                method: 'POST',
+                headers: getHeaders(),
+                body: JSON.stringify({
+                    prompt,
+                    size: document.getElementById('img-size').value,
+                    quality: document.getElementById('img-quality').value,
+                    n: parseInt(document.getElementById('img-n').value) || 1,
+                }),
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${res.status}`);
+            }
+
+            const data = await res.json();
+            if (loading.parentNode) loading.remove();
+            (data.images || []).forEach((img, i) => addImageToGallery(img.b64, img.format, img.revised_prompt, i));
+            document.getElementById('img-prompt').value = '';
+        } catch (e) {
+            if (loading.parentNode) loading.remove();
+            const errDiv = document.createElement('div');
+            errDiv.className = 'image-loading';
+            errDiv.style.color = 'var(--error)';
+            errDiv.textContent = `Error: ${e.message}`;
+            gallery.prepend(errDiv);
+        } finally {
+            btn.textContent = 'Generate Image';
+            btn.disabled = false;
+        }
+    }
+
     async function interruptGeneration() {
         if (!state.isGenerating) return;
         
@@ -530,11 +692,20 @@
         
         try {
             await fetch(url, { method: 'POST', headers: getHeaders() });
-            // Don't abort fetch immediately, let the SSE stream close naturally or handle the done event
         } catch (e) {
             appendMessage(`[Error] Interrupt failed: ${e.message}`, 'error');
         }
     }
+
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+        });
+    });
 
     // Event Listeners
     els.connectBtn.addEventListener('click', checkConnection);
@@ -543,9 +714,14 @@
     els.interruptBtn.addEventListener('click', interruptGeneration);
     els.clearBtn.addEventListener('click', () => { els.messages.innerHTML = ''; });
     els.promptInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-            sendPrompt();
-        }
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendPrompt();
+    });
+    document.getElementById('img-generate-btn').addEventListener('click', generateImage);
+    document.getElementById('img-clear-btn').addEventListener('click', () => {
+        document.getElementById('image-gallery').innerHTML = '';
+    });
+    document.getElementById('img-prompt').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generateImage();
     });
 
     // Initial check

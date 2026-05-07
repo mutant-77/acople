@@ -85,6 +85,7 @@ Acople est maintenant prêt pour la production. Vous pouvez configurer ces varia
 - `ACOPLE_API_KEY` : Définissez une clé secrète pour protéger vos endpoints (ex. `export ACOPLE_API_KEY="mon_secret"`). Puis passez-la dans l'en-tête `X-API-Key`.
 - `ACOPLE_MAX_CONCURRENT` : Limite de sessions simultanées pour ne pas saturer votre ordinateur (par défaut `5`).
 - `ACOPLE_CORS_ORIGINS` : Contrôlez qui peut accéder à votre API (par défaut `http://localhost:*`).
+- `OPENAI_API_KEY` : Requise pour la génération d'images avec `gpt-image-1`.
 
 ---
 
@@ -94,6 +95,7 @@ Acople est maintenant prêt pour la production. Vous pouvez configurer ces varia
 |----------|---------|--------------|
 | `POST /chat/simple` | Passez juste le prompt | Pour quelque chose de rapide et facile ✅ |
 | `POST /chat` | Avec plus d'options | Quand vous avez besoin de plus de contrôle (ex. cwd, timeouts) |
+| `POST /image/generate` | Génère des images | Génération d'images avec gpt-image-1 🎨 |
 | `GET /agents` | Liste les agents installés | Pour voir ce qui est disponible |
 | `GET /models` | Liste les modèles de l'agent | Pour choisir un modèle spécifique |
 | `GET /health` | Le serveur est-il en vie ? | Vérification rapide de l'état |
@@ -170,6 +172,35 @@ Avec Acople, vous pouvez créer :
 - Générateur de **tests**
 - **Débogueur** intelligent
 - Tout ce qui **vous passe par la tête** ✨
+
+---
+
+## Génération d'Images 🎨
+
+Acople peut générer des images en utilisant `gpt-image-1` d'OpenAI :
+
+```bash
+# Configurez votre clé API OpenAI
+export OPENAI_API_KEY="sk-..."
+
+# Générez une image
+curl -X POST http://localhost:8000/image/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Une ville futuriste au coucher du soleil", "size": "1024x1024", "quality": "high"}'
+```
+
+Ou utilisez-le depuis Python :
+
+```python
+from acople import ImageBridge, ImageConfig
+
+bridge = ImageBridge()
+results = await bridge.generate(
+    "Une ville futuriste au coucher du soleil",
+    ImageConfig(size="1024x1024", quality="high")
+)
+# results[0].b64_data contient l'image encodée en base64
+```
 
 ---
 

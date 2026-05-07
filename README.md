@@ -85,6 +85,7 @@ Acople is now production-ready. You can configure these environment variables:
 - `ACOPLE_API_KEY`: Define a secret key to protect your endpoints (e.g. `export ACOPLE_API_KEY="my_secret"`). Then pass it in the `X-API-Key` header.
 - `ACOPLE_MAX_CONCURRENT`: Limit of simultaneous sessions to avoid saturating your computer (default is `5`).
 - `ACOPLE_CORS_ORIGINS`: Control who can hit your API (default `http://localhost:*`).
+- `OPENAI_API_KEY`: Required for image generation with `gpt-image-1`.
 
 ---
 
@@ -94,6 +95,7 @@ Acople is now production-ready. You can configure these environment variables:
 |----------|---------|--------------|
 | `POST /chat/simple` | Just pass the prompt | For something quick and easy ✅ |
 | `POST /chat` | With more options | When you need more control (e.g. cwd, timeouts) |
+| `POST /image/generate` | Generate images | Image generation with gpt-image-1 🎨 |
 | `GET /agents` | Lists installed agents | To see what's available |
 | `GET /models` | Lists agent models | To choose a specific model |
 | `GET /health` | Is the server alive? | Quick status check |
@@ -170,6 +172,35 @@ With Acople you can create:
 - **Tests** generator
 - Smart **debugger**
 - Whatever **comes to your mind** ✨
+
+---
+
+## Image Generation 🎨
+
+Acople can generate images using OpenAI's `gpt-image-1`:
+
+```bash
+# Set your OpenAI API key
+export OPENAI_API_KEY="sk-..."
+
+# Generate an image
+curl -X POST http://localhost:8000/image/generate \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "A futuristic city at sunset", "size": "1024x1024", "quality": "high"}'
+```
+
+Or use it from Python:
+
+```python
+from acople import ImageBridge, ImageConfig
+
+bridge = ImageBridge()
+results = await bridge.generate(
+    "A futuristic city at sunset",
+    ImageConfig(size="1024x1024", quality="high")
+)
+# results[0].b64_data contains the base64-encoded image
+```
 
 ---
 

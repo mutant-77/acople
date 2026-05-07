@@ -28,6 +28,7 @@ class EventType(str, Enum):
     TOKEN = "token"
     TOOL_USE = "tool_use"
     TOOL_RESULT = "tool_result"
+    IMAGE = "image"
     DONE = "done"
     ERROR = "error"
     SYSTEM = "system"

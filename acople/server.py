@@ -41,7 +41,12 @@ from acople.security import (
     validate_agent_name,
     validate_cwd,
     validate_prompt,
+    validate_image_size,
+    validate_image_quality,
+    validate_image_n,
+    validate_image_output_format,
 )
+from acople.image_bridge import ImageBridge, ImageConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -80,7 +85,7 @@ async def verify_api_key(request: Request):
 app = FastAPI(
     title="Acople",
     description="Universal bridge to IDE AI agents",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
     dependencies=[Depends(verify_api_key)],
 )
@@ -105,6 +110,14 @@ class ChatRequest(BaseModel):
 
 class SimpleChatRequest(BaseModel):
     prompt: str
+
+
+class ImageGenerateRequest(BaseModel):
+    prompt: str
+    size: str = "auto"
+    quality: str = "auto"
+    n: int = 1
+    output_format: str = "png"
 
 
 @app.get("/agents")
@@ -317,6 +330,88 @@ def interrupt(session_id: str | None = None):
     return {"ok": True, "interrupted": count}
 
 
+# ---------------------------------------------------------------------------
+# Image Generation Endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/image/generate")
+async def generate_image(req: ImageGenerateRequest):
+    """Genera imagen(es) con gpt-image-1. Devuelve JSON con base64."""
+    try:
+        validate_prompt(req.prompt)
+        validate_image_size(req.size)
+        validate_image_quality(req.quality)
+        validate_image_n(req.n)
+        validate_image_output_format(req.output_format)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    try:
+        bridge = ImageBridge()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    config = ImageConfig(
+        size=req.size,
+        quality=req.quality,
+        n=req.n,
+        output_format=req.output_format,
+    )
+
+    try:
+        results = await bridge.generate(req.prompt, config)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return {
+        "images": [
+            {"b64": r.b64_data, "format": r.format, "revised_prompt": r.revised_prompt}
+            for r in results
+        ],
+        "model": "gpt-image-1",
+    }
+
+
+@app.post("/image/generate/stream")
+async def generate_image_stream(req: ImageGenerateRequest):
+    """Genera imagen(es) con gpt-image-1 vía SSE."""
+    try:
+        validate_prompt(req.prompt)
+        validate_image_size(req.size)
+        validate_image_quality(req.quality)
+        validate_image_n(req.n)
+        validate_image_output_format(req.output_format)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    async def event_stream():
+        try:
+            bridge = ImageBridge()
+        except Exception as e:
+            yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
+            return
+
+        config = ImageConfig(
+            size=req.size,
+            quality=req.quality,
+            n=req.n,
+            output_format=req.output_format,
+        )
+
+        async for event in bridge.generate_stream(req.prompt, config):
+            yield event.to_sse()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/health")
 def health():
-    return {"status": "ok", "agent": _DEFAULT_AGENT}
+    return {
+        "status": "ok",
+        "agent": _DEFAULT_AGENT,
+        "image_ready": bool(os.environ.get("OPENAI_API_KEY")),
+    }

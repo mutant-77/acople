@@ -37,7 +37,7 @@ class TestFase5Docs:
         content = (root / "README.md").read_text(encoding="utf-8")
 
         # Un README minimal no debe ser enorme
-        assert len(content) < 5000, "README muy largo"
+        assert len(content) < 8000, "README muy largo"
 
     def test_init_docstring(self):
         """5.2 Docstring en __init__.py"""

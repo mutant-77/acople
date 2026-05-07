@@ -28,8 +28,13 @@ from .bridge import (
     from_env,
     get_config,
 )
+from .image_bridge import (
+    ImageBridge,
+    ImageConfig,
+    ImageResult,
+)
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "Acople",
@@ -39,6 +44,9 @@ __all__ = [
     "EventType",
     "AgentConfig",
     "AGENT_CONFIGS",
+    "ImageBridge",
+    "ImageConfig",
+    "ImageResult",
     "detect_agent",
     "detect_all_agents",
     "detect_models",
