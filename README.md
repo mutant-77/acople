@@ -101,6 +101,8 @@ Acople is now production-ready. You can configure these environment variables:
 | `GET /health` | Is the server alive? | Quick status check |
 | `GET /ui` | Built-in web interface | To test your agents directly from the browser 🖥️ |
 | `POST /interrupt` | Cancels what is running | To stop one session or all of them |
+| `POST /v1/chat/completions` | OpenAI compatible chat | Use Acople as a backend for any AI tool 🔌 |
+| `GET /v1/models` | OpenAI models list | Compatibility with OpenAI spec |
 
 ---
 
@@ -113,6 +115,19 @@ Just start your server:
 uvicorn acople.server:app --port 8000
 ```
 And open in your browser: **`http://localhost:8000/ui`**
+
+---
+
+## OpenAI Compatibility 🔌
+
+Acople can act as a local **OpenAI-compatible gateway**. This means you can point any tool that supports OpenAI (like [NullClaw](https://github.com/nullclaw/nullclaw), *Continue*, *Cursor*, etc.) to your local Acople server.
+
+**Configuration for your tools:**
+- **Base URL:** `http://localhost:8000/v1`
+- **API Key:** `any-string` (or your `ACOPLE_API_KEY`)
+- **Model:** `acople/claude`, `acople/gemini`, etc.
+
+Now your favorite CLI agents are available as a standard API!
 
 ---
 

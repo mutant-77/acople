@@ -10,6 +10,8 @@ Endpoints:
     POST /chat/simple → streaming SSE (prompt only)
     POST /interrupt  → interrumpe generación
     GET  /health    → health check
+    POST /v1/chat/completions → OpenAI compatibility layer
+    GET  /v1/models → OpenAI models list
 """
 
 import asyncio
@@ -17,6 +19,8 @@ import logging
 import os
 import sys
 import uuid
+import json
+import time
 from contextlib import asynccontextmanager
 
 if sys.platform == "win32":
@@ -251,6 +255,129 @@ async def chat(req: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Compatibility Layer (Shim)
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/models")
+async def list_openai_models():
+    """OpenAI-compatible models list."""
+    agents = detect_all_agents()
+    data = []
+    for name, installed in agents.items():
+        if installed:
+            data.append({
+                "id": name,
+                "object": "model",
+                "created": int(time.time()),
+                "owned_by": "acople"
+            })
+    return {"object": "list", "data": data}
+
+
+@app.post("/v1/chat/completions")
+async def openai_compatibility(request: Request):
+    """
+    OpenAI-compatible endpoint. Turns Acople into a local AI provider.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    messages = body.get("messages", [])
+    if not messages:
+        raise HTTPException(status_code=400, detail="No messages provided")
+
+    # Extract user prompt and system message
+    prompt = ""
+    system_msg = None
+    
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content", "")
+        if role == "system":
+            system_msg = content
+        elif role == "user":
+            prompt = content
+
+    # Check if we should stream
+    stream = body.get("stream", False)
+    
+    # Resolve agent name from model field (e.g. "acople/claude" -> "claude")
+    full_model = body.get("model", _DEFAULT_AGENT or "claude")
+    agent_name = full_model.split("/")[-1] if "/" in full_model else full_model
+
+    async def openai_stream():
+        try:
+            active = Acople(agent_name)
+            session_id = str(uuid.uuid4())
+            
+            def reg(p): ACTIVE_PROCESSES[session_id] = p
+            
+            # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long
+            # to prevent WinError 206 (command line limit).
+            effective_system = system_msg
+            if sys.platform == "win32" and system_msg and len(system_msg) > 1000:
+                logger.warning("System prompt too long for Windows CLI, omitting to prevent crash.")
+                effective_system = None
+
+            async for event in active.run(prompt, system=effective_system, on_start=reg):
+                if event.type == EventType.TOKEN:
+                    chunk = {
+                        "id": session_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": agent_name,
+                        "choices": [{
+                            "delta": {"content": event.data.get("text", "")}, 
+                            "index": 0, 
+                            "finish_reason": None
+                        }]
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                elif event.type == EventType.DONE:
+                    chunk = {
+                        "id": session_id,
+                        "object": "chat.completion.chunk",
+                        "created": int(time.time()),
+                        "model": agent_name,
+                        "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]
+                    }
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
+            
+            ACTIVE_PROCESSES.pop(session_id, None)
+        except Exception as e:
+            logger.error(f"OpenAI Shim Error: {e}")
+            yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    if stream:
+        return StreamingResponse(openai_stream(), media_type="text/event-stream")
+    else:
+        content = ""
+        try:
+            active = Acople(agent_name)
+            async for event in active.run(prompt, system=system_msg):
+                if event.type == EventType.TOKEN:
+                    content += event.data.get("text", "")
+            
+            return {
+                "id": str(uuid.uuid4()),
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": agent_name,
+                "choices": [{
+                    "message": {"role": "assistant", "content": content},
+                    "index": 0,
+                    "finish_reason": "stop"
+                }]
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/chat/simple")

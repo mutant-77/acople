@@ -300,6 +300,10 @@
                     <span>Image Generation</span>
                     <span class="badge" id="info-image">Unknown</span>
                 </div>
+                <div class="info-row">
+                    <span>OpenAI Gateway</span>
+                    <span class="badge" id="info-openai">Active</span>
+                </div>
             </div>
             <button class="diagnostics-btn" id="diagnostics-btn" style="margin-top: 1rem;">Run Diagnostics</button>
             
@@ -313,6 +317,9 @@
                 <div><span class="endpoint-method">POST</span> /chat/simple</div>
                 <div><span class="endpoint-method">POST</span> /image/generate</div>
                 <div><span class="endpoint-method">POST</span> /interrupt</div>
+                <div style="margin-top: 0.5rem; color: var(--primary); font-weight: bold;">OpenAI Gateway (New!):</div>
+                <div><span class="endpoint-method">POST</span> /v1/chat/completions</div>
+                <div><span class="endpoint-method">GET</span> /v1/models</div>
             </div>
         </div>
     </div>
@@ -458,6 +465,11 @@
                 const imgEl = document.getElementById('info-image');
                 imgEl.textContent = data.image_ready ? 'Ready ✓' : 'No API Key';
                 imgEl.style.color = data.image_ready ? 'var(--success)' : 'var(--text-muted)';
+                
+                const openaiEl = document.getElementById('info-openai');
+                openaiEl.textContent = 'Active ✓';
+                openaiEl.style.color = 'var(--success)';
+
                 appendMessage(`[System] Connected to server. Active agent: ${data.agent}`, 'system');
                 await loadAgents();
             } else {

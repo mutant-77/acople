@@ -36,7 +36,8 @@ Comme vous ne pouvez pas exécuter de commandes CLI depuis un navigateur web ou 
 Acople gère l'analyse complexe des flux de terminaux, vous donnant des jetons (tokens) propres en temps réel. C'est la différence entre une application figée et une expérience interactive.
 
 ### Prêt pour la Production
-Contrôle de **concurrence intégré**, gestion du cycle de vie des processus et authentification par clé API.
+- Contrôle de **concurrence intégré**, gestion du cycle de vie des processus et authentification par clé API.
+- **Compatible OpenAI :** Expose vos agents via une API compatible OpenAI (`/v1/chat/completions`), vous permettant d'utiliser des agents CLI avec n'importe quel outil d'IA.
 
 ---
 
@@ -101,6 +102,8 @@ Acople est maintenant prêt pour la production. Vous pouvez configurer ces varia
 | `GET /health` | Le serveur est-il en vie ? | Vérification rapide de l'état |
 | `GET /ui` | Interface web intégrée | Pour tester vos agents directement depuis le navigateur 🖥️ |
 | `POST /interrupt` | Annule ce qui est en cours d'exécution | Pour arrêter une session ou toutes |
+| `POST /v1/chat/completions` | Chat compatible OpenAI | Utilisez Acople comme backend pour n'importe quel outil d'IA 🔌 |
+| `GET /v1/models` | Liste des modèles OpenAI | Compatibilité avec la spécification OpenAI |
 
 ---
 
@@ -113,6 +116,19 @@ Démarrez simplement votre serveur :
 uvicorn acople.server:app --port 8000
 ```
 Et ouvrez dans votre navigateur : **`http://localhost:8000/ui`**
+
+---
+
+## Compatibilité OpenAI 🔌
+
+Acople peut agir comme une **passerelle locale compatible OpenAI**. Cela signifie que vous pouvez pointer n'importe quel outil prenant en charge OpenAI (comme [NullClaw](https://github.com/nullclaw/nullclaw), *Continue*, *Cursor*, etc.) vers votre serveur local Acople.
+
+**Configuration pour vos outils :**
+- **Base URL :** `http://localhost:8000/v1`
+- **API Key :** `n'importe-quelle-chaîne` (ou votre `ACOPLE_API_KEY`)
+- **Model :** `acople/claude`, `acople/gemini`, etc.
+
+Vos agents CLI préférés sont désormais disponibles sous forme d'API standard !
 
 ---
 

@@ -35,7 +35,8 @@ Como no podés ejecutar comandos de terminal desde un navegador web o una app m�
 Acople se encarga del complejo parsing de los streams de la terminal, entregándote tokens limpios en tiempo real. Es la diferencia entre una app congelada y una experiencia fluida.
 
 ### Listo para Producción
-Incluye **control de concurrencia** nativo, gestión del ciclo de vida de procesos y autenticación mediante API Key.
+- Incluye **control de concurrencia** nativo, gestión del ciclo de vida de procesos y autenticación mediante API Key.
+- **Compatible con OpenAI:** Expone tus agentes a través de una API compatible con OpenAI (`/v1/chat/completions`), lo que te permite usar agentes CLI con cualquier herramienta de IA.
 
 ---
 
@@ -100,6 +101,8 @@ Ahora Acople es apto para producción. Podés configurar estas variables de ento
 | `GET /health` | ¿El servidor está vivo? | Check rápido de estado |
 | `GET /ui` | Interfaz web integrada | Para probar tus agentes directo desde el navegador 🖥️ |
 | `POST /interrupt` | Cancela lo que está corriendo | Para parar una sesión o todas |
+| `POST /v1/chat/completions` | Chat compatible con OpenAI | Usa Acople como backend para cualquier herramienta de IA 🔌 |
+| `GET /v1/models` | Lista de modelos OpenAI | Compatibilidad con la especificación de OpenAI |
 
 ---
 
@@ -112,6 +115,19 @@ Solo iniciá tu servidor:
 uvicorn acople.server:app --port 8000
 ```
 Y abrí en tu navegador: **`http://localhost:8000/ui`**
+
+---
+
+## Compatibilidad con OpenAI 🔌
+
+Acople puede actuar como un **gateway local compatible con OpenAI**. Esto significa que podés apuntar cualquier herramienta que soporte OpenAI (como [NullClaw](https://github.com/nullclaw/nullclaw), *Continue*, *Cursor*, etc.) a tu servidor local de Acople.
+
+**Configuración para tus herramientas:**
+- **Base URL:** `http://localhost:8000/v1`
+- **API Key:** `cualquier-string` (o tu `ACOPLE_API_KEY`)
+- **Model:** `acople/claude`, `acople/gemini`, etc.
+
+¡Ahora tus agentes CLI favoritos están disponibles como una API estándar!
 
 ---
 
