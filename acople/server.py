@@ -318,13 +318,15 @@ async def openai_compatibility(request: Request):
             def reg(p): ACTIVE_PROCESSES[session_id] = p
             
             # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long
-            # to prevent WinError 206 (command line limit).
+            # Instead of stripping it, we merge it into the main prompt so the agent 
+            # still gets its tool instructions without hitting the Windows CMD limit.
             effective_system = system_msg
-            if sys.platform == "win32" and system_msg and len(system_msg) > 1000:
-                logger.warning("System prompt too long for Windows CLI, omitting to prevent crash.")
+            effective_prompt = prompt
+            if sys.platform == "win32" and system_msg and (len(system_msg) + len(prompt)) > 1000:
+                effective_prompt = f"[SYSTEM INSTRUCTIONS]\n{system_msg}\n\n[USER REQUEST]\n{prompt}"
                 effective_system = None
 
-            async for event in active.run(prompt, system=effective_system, on_start=reg):
+            async for event in active.run(effective_prompt, system=effective_system, on_start=reg):
                 if event.type == EventType.TOKEN:
                     chunk = {
                         "id": session_id,
@@ -363,11 +365,15 @@ async def openai_compatibility(request: Request):
             active = Acople(agent_name)
             
             # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long
+            # Instead of stripping it, we merge it into the main prompt so the agent 
+            # still gets its tool instructions without hitting the Windows CMD limit.
             effective_system = system_msg
-            if sys.platform == "win32" and system_msg and len(system_msg) > 1000:
+            effective_prompt = prompt
+            if sys.platform == "win32" and system_msg and (len(system_msg) + len(prompt)) > 1000:
+                effective_prompt = f"[SYSTEM INSTRUCTIONS]\n{system_msg}\n\n[USER REQUEST]\n{prompt}"
                 effective_system = None
 
-            async for event in active.run(prompt, system=effective_system):
+            async for event in active.run(effective_prompt, system=effective_system):
                 if event.type == EventType.TOKEN:
                     content += event.data.get("text", "")
             
