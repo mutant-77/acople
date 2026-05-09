@@ -357,11 +357,17 @@ async def openai_compatibility(request: Request):
 
     if stream:
         return StreamingResponse(openai_stream(), media_type="text/event-stream")
-    else:
+        else:
         content = ""
         try:
             active = Acople(agent_name)
-            async for event in active.run(prompt, system=system_msg):
+            
+            # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long
+            effective_system = system_msg
+            if sys.platform == "win32" and system_msg and len(system_msg) > 1000:
+                effective_system = None
+
+            async for event in active.run(prompt, system=effective_system):
                 if event.type == EventType.TOKEN:
                     content += event.data.get("text", "")
             
