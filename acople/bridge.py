@@ -72,8 +72,8 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
     ),
     "codex": AgentConfig(
         bin="codex",
-        args=[],
-        prompt_flag="exec",
+        args=["exec", "--skip-git-repo-check"],
+        prompt_flag="",
         stream_format="plain",
     ),
     "opencode": AgentConfig(
@@ -503,13 +503,18 @@ class Acople:
                 yield event
 
         if proc.stderr:
-            stderr_bytes = await proc.stderr.read()
+            try:
+                stderr_bytes = await asyncio.wait_for(proc.stderr.read(), timeout=5.0)
+            except asyncio.TimeoutError:
+                stderr_bytes = b""
             if stderr_bytes:
                 stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
                 if stderr:
-                    # Esperar a que el proceso termine para ver si fue un error real o solo logs
-                    await proc.wait()
-                    if proc.returncode != 0:
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=2.0)
+                    except asyncio.TimeoutError:
+                        pass
+                    if proc.returncode is not None and proc.returncode != 0:
                         yield BridgeEvent(EventType.ERROR, {"message": stderr})
                     else:
                         yield BridgeEvent(EventType.SYSTEM, {"message": stderr})
