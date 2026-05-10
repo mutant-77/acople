@@ -314,44 +314,81 @@ async def openai_compatibility(request: Request):
         try:
             active = Acople(agent_name)
             session_id = str(uuid.uuid4())
-            
+
             def reg(p): ACTIVE_PROCESSES[session_id] = p
-            
-            # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long
-            # Instead of stripping it, we merge it into the main prompt so the agent 
-            # still gets its tool instructions without hitting the Windows CMD limit.
+
+            # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long.
+            # Instead of stripping, we merge into the main prompt so the agent still
+            # gets its tool instructions without hitting the Windows CMD limit.
             effective_system = system_msg
             effective_prompt = prompt
             if sys.platform == "win32" and system_msg and (len(system_msg) + len(prompt)) > 1000:
                 effective_prompt = f"[SYSTEM INSTRUCTIONS]\n{system_msg}\n\n[USER REQUEST]\n{prompt}"
                 effective_system = None
 
-            async for event in active.run(effective_prompt, system=effective_system, on_start=reg):
-                if event.type == EventType.TOKEN:
-                    chunk = {
-                        "id": session_id,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": agent_name,
-                        "choices": [{
-                            "delta": {"content": event.data.get("text", "")}, 
-                            "index": 0, 
-                            "finish_reason": None
-                        }]
-                    }
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                elif event.type == EventType.DONE:
-                    chunk = {
-                        "id": session_id,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "model": agent_name,
-                        "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]
-                    }
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                    yield "data: [DONE]\n\n"
-            
-            ACTIVE_PROCESSES.pop(session_id, None)
+            # Queue to decouple bridge events from the SSE generator
+            queue: asyncio.Queue = asyncio.Queue()
+            SENTINEL = object()
+
+            async def _producer():
+                try:
+                    async for event in active.run(effective_prompt, system=effective_system, on_start=reg):
+                        await queue.put(event)
+                except Exception as e:
+                    logger.error(f"Producer error: {e}")
+                finally:
+                    await queue.put(SENTINEL)
+
+            producer_task = asyncio.create_task(_producer())
+
+            # Consumer: relay events to SSE, send keep-alive every 5s to prevent timeout
+            try:
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        # Send an empty OpenAI chunk to keep the connection alive
+                        # (SSE comments can confuse some parsers like NullClaw)
+                        keepalive = {
+                            "id": session_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": agent_name,
+                            "choices": [{"delta": {"content": ""}, "index": 0, "finish_reason": None}]
+                        }
+                        yield f"data: {json.dumps(keepalive)}\n\n"
+                        continue
+
+                    if event is SENTINEL:
+                        break
+
+                    if event.type == EventType.TOKEN:
+                        chunk = {
+                            "id": session_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": agent_name,
+                            "choices": [{
+                                "delta": {"content": event.data.get("text", "")},
+                                "index": 0,
+                                "finish_reason": None
+                            }]
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                    elif event.type == EventType.DONE:
+                        chunk = {
+                            "id": session_id,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": agent_name,
+                            "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                        yield "data: [DONE]\n\n"
+            finally:
+                producer_task.cancel()
+                ACTIVE_PROCESSES.pop(session_id, None)
+
         except Exception as e:
             logger.error(f"OpenAI Shim Error: {e}")
             yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n"

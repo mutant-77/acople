@@ -67,7 +67,7 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
     "gemini": AgentConfig(
         bin="gemini",
         args=["--skip-trust"],
-        prompt_flag="-p",
+        prompt_flag="",  # Empty means use stdin
         stream_format="plain",
     ),
     "codex": AgentConfig(
@@ -335,8 +335,7 @@ class Acople:
 
         if cfg.prompt_flag:
             cmd += [cfg.prompt_flag, prompt]
-        else:
-            cmd.append(prompt)
+        # Si prompt_flag está vacío, no lo pasamos por CLI (se enviará por stdin)
 
         # On Windows, executing .cmd or .bat directly can fail with WinError 193
         if os.name == 'nt' and (bin_cmd.lower().endswith('.cmd') or bin_cmd.lower().endswith('.bat')):
@@ -364,6 +363,7 @@ class Acople:
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=work_dir,
@@ -374,6 +374,7 @@ class Acople:
                 creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0
                 raw_proc = subprocess.Popen(
                     cmd,
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     cwd=work_dir,
@@ -383,6 +384,18 @@ class Acople:
 
             if on_start:
                 on_start(proc)
+
+            # If the config has no prompt flag, we send the prompt via stdin
+            if not self.config.prompt_flag:
+                proc.stdin.write(full_prompt.encode("utf-8", errors="replace"))
+                await proc.stdin.drain()
+                try:
+                    proc.stdin.close()
+                    if hasattr(proc.stdin, "wait_closed"):
+                        await proc.stdin.wait_closed()
+                except Exception:
+                    pass
+
             logger.info(f"PID: {proc.pid}")
         except Exception as e:
             import traceback
