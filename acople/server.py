@@ -396,13 +396,13 @@ async def openai_compatibility(request: Request):
 
     if stream:
         return StreamingResponse(openai_stream(), media_type="text/event-stream")
-        else:
+    else:
         content = ""
         try:
             active = Acople(agent_name)
-            
+
             # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long
-            # Instead of stripping it, we merge it into the main prompt so the agent 
+            # Instead of stripping it, we merge it into the main prompt so the agent
             # still gets its tool instructions without hitting the Windows CMD limit.
             effective_system = system_msg
             effective_prompt = prompt
@@ -413,7 +413,7 @@ async def openai_compatibility(request: Request):
             async for event in active.run(effective_prompt, system=effective_system):
                 if event.type == EventType.TOKEN:
                     content += event.data.get("text", "")
-            
+
             return {
                 "id": str(uuid.uuid4()),
                 "object": "chat.completion",
