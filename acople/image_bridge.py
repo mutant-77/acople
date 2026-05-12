@@ -5,11 +5,10 @@ Llama directamente a la API de OpenAI para generar imágenes.
 Devuelve resultados en base64.
 """
 
-import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 

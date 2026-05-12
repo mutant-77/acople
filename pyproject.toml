@@ -11,7 +11,7 @@ license = "MIT"
 authors = [
     { name = "Acople", email = "hello@acople.dev" }
 ]
-keywords = ["ai", "agent", "claude", "opencode", "codex", "gemini", "bridge", "connector", "image-generation", "openai"]
+keywords = ["ai", "agent", "claude", "opencode", "kilo", "codex", "gemini", "bridge", "connector", "image-generation", "openai"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

@@ -1,7 +1,7 @@
 """
 Acople — Universal bridge to IDE AI agents
 
-Soporta: claude, gemini, codex, opencode, qwen, y cualquier CLI personalizado.
+Soporta: claude, gemini, codex, opencode, kilo, qwen, y cualquier CLI personalizado.
 """
 
 import asyncio
@@ -78,6 +78,12 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
     ),
     "opencode": AgentConfig(
         bin="opencode",
+        args=["run"],
+        prompt_flag="",
+        stream_format="plain",
+    ),
+    "kilo": AgentConfig(
+        bin="kilo",
         args=["run"],
         prompt_flag="",
         stream_format="plain",
@@ -211,6 +217,7 @@ AGENT_INSTALL_HINTS = {
     "gemini": "npm i -g @google/gemini-cli",
     "codex": "npm i -g @openai/codex",
     "opencode": "npm i -g opencode",
+    "kilo": "npm i -g kilo",
     "qwen": "pip install qwen-agent",
 }
 
@@ -224,7 +231,7 @@ class AsyncProcessProxy:
         self.stdout_queue = asyncio.Queue()
         self.stderr_queue = asyncio.Queue()
         self.loop = asyncio.get_running_loop()
-        
+
         self._t_out = threading.Thread(target=self._reader, args=(self.proc.stdout, self.stdout_queue))
         self._t_err = threading.Thread(target=self._reader, args=(self.proc.stderr, self.stderr_queue))
         self._t_out.daemon = True
@@ -243,7 +250,7 @@ class AsyncProcessProxy:
             pass
         finally:
             self.loop.call_soon_threadsafe(queue.put_nowait, b"")
-            
+
     async def wait(self):
         import asyncio
         def _wait():
@@ -251,26 +258,26 @@ class AsyncProcessProxy:
             return self.proc.returncode
         self.returncode = await asyncio.to_thread(_wait)
         return self.returncode
-        
+
     def terminate(self):
         self.proc.terminate()
-        
+
     def kill(self):
         self.proc.kill()
-        
+
     def send_signal(self, sig):
         self.proc.send_signal(sig)
-        
+
     class _StreamProxy:
         def __init__(self, queue):
             self.queue = queue
         async def read(self, n=None):
             return await self.queue.get()
-            
+
     @property
     def stdout(self):
         return self._StreamProxy(self.stdout_queue)
-        
+
     @property
     def stderr(self):
         return self._StreamProxy(self.stderr_queue)
@@ -294,7 +301,7 @@ class Acople:
             hint = AGENT_INSTALL_HINTS.get("claude", "")
             raise AgentNotFoundError(
                 "No se encontró ningún agente CLI en PATH. "
-                "Instala uno de: claude, gemini, codex, opencode, qwen.",
+                "Instala uno de: claude, gemini, codex, opencode, kilo, qwen.",
                 suggestion=f"Ejecuta: {hint}",
             )
         self.config = get_config(self.agent_name)

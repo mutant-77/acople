@@ -75,7 +75,6 @@ class TestImageStreamEndpoint:
     """Tests para POST /image/generate/stream."""
 
     def test_stream_returns_sse(self, client, mock_image_generate):
-        from acople.image_bridge import ImageResult
 
         async def mock_stream(prompt, config=None):
             from acople.bridge import BridgeEvent, EventType

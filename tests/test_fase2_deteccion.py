@@ -28,7 +28,7 @@ class TestFase2Deteccion:
         try:
             from acople import detect_all_agents
             result = detect_all_agents()
-            expected = ["claude", "gemini", "codex", "opencode", "qwen"]
+            expected = ["claude", "gemini", "codex", "opencode", "kilo", "qwen"]
             for agent in expected:
                 assert agent in result, f"{agent} debe estar en resultado"
             assert all(isinstance(v, bool) for v in result.values())

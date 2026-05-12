@@ -147,6 +147,9 @@ npm i -g @google/gemini-cli
 # OpenCode (open source)
 npm i -g opencode
 
+# Kilo (fork de OpenCode)
+npm i -g kilo
+
 # Codex CLI
 npm i -g @openai/codex
 ```
@@ -222,7 +225,7 @@ results = await bridge.generate(
 ## Requisitos 📋
 
 - Python 3.10+
-- Al menos 1 agente CLI instalado (cualquiera de: `claude`, `gemini`, `opencode`, `codex`, `qwen`)
+- Al menos 1 agente CLI instalado (cualquiera de: `claude`, `gemini`, `opencode`, `kilo`, `codex`, `qwen`)
 
 ---
 

@@ -61,6 +61,7 @@ class TestDetectAllAgents:
             assert "gemini" in result
             assert "codex" in result
             assert "opencode" in result
+            assert "kilo" in result
             assert "qwen" in result
 
     def test_marks_found_agents_as_true(self):
@@ -160,12 +161,12 @@ class TestBuildCmd:
     def test_build_cmd_without_prompt_flag(self):
         from acople import Acople
 
-        # opencode has empty prompt_flag
+        # opencode has empty prompt_flag → prompt goes via stdin, not CLI
         with patch("acople.bridge.shutil.which", return_value="/usr/bin/opencode"):
             bridge = Acople("opencode")
             cmd = bridge._build_cmd("hello")
 
-        assert "hello" in cmd
+        assert "hello" not in cmd
 
 
 class TestResolveBin:
@@ -265,7 +266,7 @@ class TestServerEndpointCoverage:
         from acople.server import app
 
         with patch("acople.server.detect_all_agents", return_value={
-            "claude": False, "gemini": False, "codex": False, "opencode": False, "qwen": False,
+            "claude": False, "gemini": False, "codex": False, "opencode": False, "kilo": False, "qwen": False,
         }):
             with patch("acople.server._DEFAULT_AGENT", None):
                 client = TestClient(app)

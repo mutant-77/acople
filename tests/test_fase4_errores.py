@@ -80,6 +80,7 @@ class TestFase4ErroresActionables:
             assert "gemini" in hints
             assert "codex" in hints
             assert "opencode" in hints
+            assert "kilo" in hints
 
             # Verificar que contienen comandos de instalación
             assert "npm" in hints["claude"] or "pip" in hints["claude"]

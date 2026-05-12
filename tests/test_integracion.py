@@ -181,7 +181,7 @@ class TestIntegracionConfig:
         """Todos los agentes configurados"""
         from acople import AGENT_CONFIGS
 
-        expected_agents = ["claude", "gemini", "codex", "opencode", "qwen"]
+        expected_agents = ["claude", "gemini", "codex", "opencode", "kilo", "qwen"]
 
         for agent in expected_agents:
             assert agent in AGENT_CONFIGS

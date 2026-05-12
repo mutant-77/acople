@@ -91,7 +91,7 @@ async def cmd_run():
         bridge = Acople(agent)
     except AgentNotFoundError as e:
         print(f"Error: {e}")
-        print("\nSolucion: instala un agente CLI (claude, gemini, opencode, codex, qwen)")
+        print("\nSolucion: instala un agente CLI (claude, gemini, opencode, kilo, codex, qwen)")
         sys.exit(1)
 
     try:
@@ -134,6 +134,7 @@ async def cmd_doctor():
         print("    - Gemini CLI: npm i -g @google/gemini-cli")
         print("    - Codex CLI: npm i -g @openai/codex")
         print("    - OpenCode: npm i -g opencode")
+        print("    - Kilo: npm i -g kilo")
 
     # Try to create bridge
     print("\n[Bridge] Validando...")

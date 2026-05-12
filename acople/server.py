@@ -15,12 +15,12 @@ Endpoints:
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
-import uuid
-import json
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 if sys.platform == "win32":
@@ -28,7 +28,7 @@ if sys.platform == "win32":
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from acople import (
@@ -40,17 +40,17 @@ from acople import (
     detect_all_agents,
     detect_models,
 )
+from acople.image_bridge import ImageBridge, ImageConfig
 from acople.security import (
     ValidationError,
     validate_agent_name,
     validate_cwd,
-    validate_prompt,
-    validate_image_size,
-    validate_image_quality,
     validate_image_n,
     validate_image_output_format,
+    validate_image_quality,
+    validate_image_size,
+    validate_prompt,
 )
-from acople.image_bridge import ImageBridge, ImageConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -165,7 +165,7 @@ def get_ui():
     ui_path = os.path.join(os.path.dirname(__file__), "ui.html")
     if not os.path.exists(ui_path):
         raise HTTPException(status_code=404, detail="ui.html not found")
-    with open(ui_path, "r", encoding="utf-8") as f:
+    with open(ui_path, encoding="utf-8") as f:
         return f.read()
 
 
@@ -185,6 +185,7 @@ def diagnose():
             "Gemini CLI: npm i -g @google/gemini-cli",
             "Codex CLI: npm i -g @openai/codex",
             "OpenCode: npm i -g opencode",
+            "Kilo: npm i -g kilo",
             "Qwen: pip install qwen-agent",
         ])
 
@@ -294,7 +295,7 @@ async def openai_compatibility(request: Request):
     # Extract user prompt and system message
     prompt = ""
     system_msg = None
-    
+
     for m in messages:
         role = m.get("role")
         content = m.get("content", "")
@@ -305,7 +306,7 @@ async def openai_compatibility(request: Request):
 
     # Check if we should stream
     stream = body.get("stream", False)
-    
+
     # Resolve agent name from model field (e.g. "acople/claude" -> "claude")
     full_model = body.get("model", _DEFAULT_AGENT or "claude")
     agent_name = full_model.split("/")[-1] if "/" in full_model else full_model
