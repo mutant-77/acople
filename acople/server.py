@@ -82,7 +82,14 @@ API_KEY = os.environ.get("ACOPLE_API_KEY")
 async def verify_api_key(request: Request):
     if not API_KEY:
         return  # No key configured = no auth (local dev)
+    
+    # Check X-API-Key header, api_key query param, or Authorization Bearer token
     key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
+    
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        key = auth_header.split(" ", 1)[1]
+
     if key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
@@ -98,8 +105,8 @@ _cors_origins = os.environ.get("ACOPLE_CORS_ORIGINS", "http://localhost:*").spli
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
 )
 
 
