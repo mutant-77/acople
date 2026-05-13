@@ -301,15 +301,46 @@ async def openai_compatibility(request: Request):
 
     # Extract user prompt and system message
     prompt = ""
-    system_msg = None
+    system_msg = ""
+    extracted_cwd = None
 
     for m in messages:
         role = m.get("role")
         content = m.get("content", "")
+        
+        # Normalize content to a single string for pattern matching
+        # Claude Code often sends an array of blocks for content
+        content_text = ""
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    content_text += block.get("text", "") + "\n"
+                elif isinstance(block, str):
+                    content_text += block + "\n"
+        else:
+            content_text = str(content)
+
         if role == "system":
-            system_msg = content
+            # Append to system_msg in case there are multiple blocks
+            system_msg += content_text + "\n"
+            
+            # Try to extract CWD from system message (Claude Code style)
+            if "working directory: " in content_text:
+                try:
+                    # Look for the path after "working directory: "
+                    # This pattern is common in Claude Code environment section
+                    parts = content_text.split("working directory: ", 1)
+                    # Take everything until the next line break
+                    path_part = parts[1].split("\n", 1)[0].strip()
+                    # Clean up trailing punctuation, quotes or markdown artifacts
+                    path_part = path_part.rstrip('."\' ')
+                    if path_part:
+                        extracted_cwd = path_part
+                        logger.info(f"Extracted CWD from system prompt: {extracted_cwd}")
+                except Exception as e:
+                    logger.warning(f"Failed to extract CWD: {e}")
         elif role == "user":
-            prompt = content
+            prompt = content_text
 
     # Check if we should stream
     stream = body.get("stream", False)
@@ -340,7 +371,12 @@ async def openai_compatibility(request: Request):
 
             async def _producer():
                 try:
-                    async for event in active.run(effective_prompt, system=effective_system, on_start=reg):
+                    async for event in active.run(
+                        effective_prompt, 
+                        system=effective_system, 
+                        on_start=reg,
+                        cwd=extracted_cwd
+                    ):
                         await queue.put(event)
                 except Exception as e:
                     logger.error(f"Producer error: {e}")
@@ -418,7 +454,11 @@ async def openai_compatibility(request: Request):
                 effective_prompt = f"[SYSTEM INSTRUCTIONS]\n{system_msg}\n\n[USER REQUEST]\n{prompt}"
                 effective_system = None
 
-            async for event in active.run(effective_prompt, system=effective_system):
+            async for event in active.run(
+                effective_prompt, 
+                system=effective_system,
+                cwd=extracted_cwd
+            ):
                 if event.type == EventType.TOKEN:
                     content += event.data.get("text", "")
 
