@@ -55,6 +55,7 @@ class AgentConfig:
     prompt_flag: str
     stream_format: str
     extra_env: dict = field(default_factory=dict)
+    max_chars: int = 50_000
 
 
 AGENT_CONFIGS: dict[str, AgentConfig] = {
@@ -63,6 +64,7 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
         args=["--output-format", "stream-json", "--no-color"],
         prompt_flag="--print",
         stream_format="json",
+        max_chars=20_000,
     ),
     "gemini": AgentConfig(
         bin="gemini",
@@ -93,6 +95,7 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
         args=["--no-color"],
         prompt_flag="-p",
         stream_format="plain",
+        max_chars=15_000,
     ),
 }
 
@@ -340,9 +343,12 @@ class Acople:
         bin_cmd = self._resolve_bin(cfg.bin)
         cmd = [bin_cmd] + cfg.args
 
-        if cfg.prompt_flag:
+        # En Windows, si el prompt es largo (> 4000), forzamos stdin aunque haya prompt_flag
+        # para evitar el límite de 8191 caracteres de la línea de comandos.
+        use_stdin = not cfg.prompt_flag or (os.name == "nt" and len(prompt) > 4000)
+
+        if cfg.prompt_flag and not use_stdin:
             cmd += [cfg.prompt_flag, prompt]
-        # Si prompt_flag está vacío, no lo pasamos por CLI (se enviará por stdin)
 
         # On Windows, executing .cmd or .bat directly can fail with WinError 193
         if os.name == 'nt' and (bin_cmd.lower().endswith('.cmd') or bin_cmd.lower().endswith('.bat')):
@@ -392,8 +398,9 @@ class Acople:
             if on_start:
                 on_start(proc)
 
-            # If the config has no prompt flag, we send the prompt via stdin
-            if not self.config.prompt_flag:
+            # If the config has no prompt flag OR we forced stdin due to length, send via stdin
+            use_stdin = not self.config.prompt_flag or (os.name == "nt" and len(full_prompt) > 4000)
+            if use_stdin:
                 proc.stdin.write(full_prompt.encode("utf-8", errors="replace"))
                 await proc.stdin.drain()
                 try:

@@ -15,6 +15,7 @@ Endpoints:
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -39,6 +40,8 @@ from acople import (
     detect_agent,
     detect_all_agents,
     detect_models,
+    process_system_messages,
+    resolve_session_id,
 )
 from acople.image_bridge import ImageBridge, ImageConfig
 from acople.security import (
@@ -58,23 +61,56 @@ logging.basicConfig(
 )
 logger = logging.getLogger("AcopleServer")
 
+
+def _normalize_content(content) -> str:
+    """Normaliza el contenido de un mensaje (soporta texto plano y bloques de Claude)."""
+    if isinstance(content, list):
+        text = ""
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    text += block.get("text", "") + "\n"
+                elif block.get("type") == "image_url":
+                    text += "[image]\n"
+                else:
+                    text += json.dumps(block, ensure_ascii=False) + "\n"
+            elif isinstance(block, str):
+                text += block + "\n"
+        return text.strip()
+    
+    # Normalización básica para strings
+    s = str(content).strip()
+    s = s.replace("\r\n", "\n")
+    return s
+
 _DEFAULT_AGENT: str | None = None
+_session_manager = None
 ACTIVE_PROCESSES: dict[str, asyncio.subprocess.Process] = {}
 MAX_CONCURRENT = int(os.environ.get("ACOPLE_MAX_CONCURRENT", "5"))
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _DEFAULT_AGENT
+    global _DEFAULT_AGENT, _session_manager
     try:
         _DEFAULT_AGENT = detect_agent()
         if _DEFAULT_AGENT:
             logger.info(f"[OK] Agente detectado: {_DEFAULT_AGENT}")
         else:
             logger.warning("[--] Ningun agente en PATH")
+
+        if os.environ.get("ACOPLE_SESSIONS", "").lower() in ("true", "1", "yes"):
+            from acople.session import SessionManager
+            _session_manager = SessionManager()
+            logger.info("[OK] COMPACTOR session module initialized")
     except Exception as e:
         logger.error(f"Error inicializando: {e}", exc_info=True)
+        _session_manager = None
     yield
+    if _session_manager:
+        _session_manager.cleanup_expired(max_age_days=7)
+        _session_manager.close()
+        _session_manager = None
 
 
 API_KEY = os.environ.get("ACOPLE_API_KEY")
@@ -82,10 +118,10 @@ API_KEY = os.environ.get("ACOPLE_API_KEY")
 async def verify_api_key(request: Request):
     if not API_KEY:
         return  # No key configured = no auth (local dev)
-    
+
     # Check X-API-Key header, api_key query param, or Authorization Bearer token
     key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    
+
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         key = auth_header.split(" ", 1)[1]
@@ -96,7 +132,7 @@ async def verify_api_key(request: Request):
 app = FastAPI(
     title="Acople",
     description="Universal bridge to IDE AI agents",
-    version="1.2.0",
+    version="1.3.0",
     lifespan=lifespan,
     dependencies=[Depends(verify_api_key)],
 )
@@ -117,6 +153,7 @@ class ChatRequest(BaseModel):
     agent: str | None = None
     model: str | None = None
     timeout: float | None = None
+    session_id: str | None = None
 
 
 class SimpleChatRequest(BaseModel):
@@ -229,6 +266,65 @@ async def chat(req: ChatRequest):
             yield BridgeEvent(EventType.ERROR, {"message": "Ningún agente disponible"}).to_sse()
             return
 
+        # ═══ SESSION PATH ═══
+        if _session_manager:
+            session_id = req.session_id or str(uuid.uuid4())
+            session_row = _session_manager.get_or_create(session_id)
+
+            metadata = {}
+            if req.cwd:
+                metadata["cwd"] = req.cwd
+            metadata["agent"] = agent_name
+            _session_manager.update_metadata(session_id, **metadata)
+
+            _session_manager.add_message(session_id, "user", req.prompt)
+
+            compiled = _session_manager.compile(
+                session_id=session_id,
+                agent=agent_name,
+            )
+
+            process_pid = f"proc_{session_id}_{uuid.uuid4().hex[:8]}"
+
+            def register(proc):
+                ACTIVE_PROCESSES[process_pid] = proc
+
+            response_content = ""
+            effective_cwd = req.cwd or session_row.get("cwd") or None
+            try:
+                active = Acople(agent_name)
+                if req.model:
+                    logger.info(f"Model selection no implementado aún: {req.model}")
+
+                async for event in active.run(
+                    prompt=compiled,
+                    cwd=effective_cwd,
+                    system=None,
+                    timeout=req.timeout,
+                    on_start=register,
+                ):
+                    if event.type == EventType.TOKEN:
+                        text = event.data.get("text", "")
+                        response_content += text
+                    yield event.to_sse()
+                
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"FINAL COMPILED PROMPT SENT TO AGENT:\n{compiled[:500]}...\n[...]\n...{compiled[-500:]}")
+
+            except AgentNotFoundError as e:
+                yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
+            except asyncio.CancelledError:
+                yield BridgeEvent(EventType.DONE, {"reason": "cancelled"}).to_sse()
+            except Exception as e:
+                yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
+            finally:
+                ACTIVE_PROCESSES.pop(process_pid, None)
+
+            if response_content:
+                _session_manager.add_message(session_id, "assistant", response_content)
+            return
+
+        # ═══ LEGACY PATH (sin sesiones) ═══
         session_id = str(uuid.uuid4())
 
         def register(proc):
@@ -236,7 +332,6 @@ async def chat(req: ChatRequest):
 
         try:
             active = Acople(agent_name)
-            # TODO: Soportar model selection cuando el CLI lo soporte
             if req.model:
                 logger.info(f"Model selection no implementado aún: {req.model}")
 
@@ -285,6 +380,89 @@ async def list_openai_models():
     return {"object": "list", "data": data}
 
 
+def _get_max_history(request: Request) -> int:
+    """Lee max_history de header X-Session-Options."""
+    options = request.headers.get("X-Session-Options", "")
+    for opt in options.split(","):
+        opt = opt.strip()
+        if opt.startswith("max_history="):
+            try:
+                return max(1, min(100, int(opt.split("=", 1)[1])))
+            except ValueError:
+                pass
+    return 10
+
+
+async def _stream_with_session(agent_name, compiled, cwd, session_id, session_manager):
+    """Streaming SSE con persistencia de sesión (COMPACTOR)."""
+    response_content = ""
+    done_event = {
+        "id": session_id,
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": agent_name,
+    }
+
+    try:
+        active = Acople(agent_name)
+        process_pid = f"proc_{session_id}_{uuid.uuid4().hex[:8]}"
+
+        def reg(p):
+            ACTIVE_PROCESSES[process_pid] = p
+
+        queue: asyncio.Queue = asyncio.Queue()
+        sentinel = object()
+
+        async def _producer():
+            try:
+                async for event in active.run(compiled, cwd=cwd, on_start=reg):
+                    await queue.put(event)
+            except Exception as e:
+                logger.error(f"Producer error: {e}")
+            finally:
+                await queue.put(sentinel)
+
+        producer_task = asyncio.create_task(_producer())
+
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    keepalive = {**done_event, "choices": [{"delta": {"content": ""}, "index": 0, "finish_reason": None}]}
+                    yield f"data: {json.dumps(keepalive)}\n\n"
+                    continue
+
+                if event is sentinel:
+                    break
+
+                if event.type == EventType.TOKEN:
+                    text = event.data.get("text", "")
+                    response_content += text
+                    chunk = {**done_event, "choices": [{"delta": {"content": text}, "index": 0, "finish_reason": None}]}
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                elif event.type in (EventType.TOOL_USE, EventType.TOOL_RESULT):
+                    if event.type == EventType.TOOL_USE:
+                        session_manager.add_message(session_id, "tool_use", json.dumps(event.data))
+                    else:
+                        session_manager.add_message(session_id, "tool_result", json.dumps(event.data))
+                elif event.type == EventType.DONE:
+                    chunk = {**done_event, "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]}
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
+        finally:
+            producer_task.cancel()
+            ACTIVE_PROCESSES.pop(process_pid, None)
+
+        if response_content:
+            session_manager.add_message(session_id, "assistant", response_content)
+
+    except Exception as e:
+        logger.error(f"OpenAI Stream Error: {e}")
+        yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n"
+        yield "data: [DONE]\n\n"
+
+
 @app.post("/v1/chat/completions")
 async def openai_compatibility(request: Request):
     """
@@ -299,55 +477,112 @@ async def openai_compatibility(request: Request):
     if not messages:
         raise HTTPException(status_code=400, detail="No messages provided")
 
-    # Extract user prompt and system message
-    prompt = ""
+    stream = body.get("stream", False)
+
+    full_model = body.get("model", _DEFAULT_AGENT or "claude")
+    agent_name = full_model.split("/")[-1] if "/" in full_model else full_model
+
+    # ═══════════════════════════════════════════════════
+    # SESSION PATH (COMPACTOR) — activado vía feature flag
+    # ═══════════════════════════════════════════════════
+    if _session_manager:
+        headers = dict(request.headers)
+        
+        # 1. Extraer CWD primero
+        _, extracted_cwd = process_system_messages(messages)
+        
+        # 2. Resolver session_id usando el CWD real del cliente si existe
+        session_id = resolve_session_id(headers, messages, agent=agent_name, cwd=extracted_cwd)
+        _session_manager.get_or_create(session_id)
+        
+        metadata = {}
+        if extracted_cwd:
+            metadata["cwd"] = extracted_cwd
+        metadata["agent"] = agent_name
+        metadata["model"] = full_model
+        if extracted_cwd:
+            metadata["project_hash"] = hashlib.md5(extracted_cwd.encode()).hexdigest()[:12]
+        if metadata:
+            _session_manager.update_metadata(session_id, **metadata)
+
+        max_history = _get_max_history(request)
+        compiled = _session_manager.compile(
+            session_id=session_id,
+            incoming=messages,
+            agent=agent_name,
+            max_history=max_history,
+        )
+        
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"SESSION PROMPT (len={len(compiled)}):\n{compiled[:500]}...\n[...]\n...{compiled[-500:]}")
+
+        if stream:
+            return StreamingResponse(
+                _stream_with_session(agent_name, compiled, extracted_cwd, session_id, _session_manager),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                    "X-Session-ID": session_id,
+                },
+            )
+        else:
+            response_content = ""
+            try:
+                active = Acople(agent_name)
+                process_pid_nonstream = f"proc_{session_id}_{uuid.uuid4().hex[:8]}"
+
+                def register_ns(proc):
+                    ACTIVE_PROCESSES[process_pid_nonstream] = proc
+
+                async for event in active.run(compiled, cwd=extracted_cwd, on_start=register_ns):
+                    if event.type == EventType.TOKEN:
+                        response_content += event.data.get("text", "")
+                ACTIVE_PROCESSES.pop(process_pid_nonstream, None)
+                if response_content:
+                    _session_manager.add_message(session_id, "assistant", response_content)
+                return {
+                    "id": session_id,
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": agent_name,
+                    "choices": [{
+                        "message": {"role": "assistant", "content": response_content},
+                        "index": 0,
+                        "finish_reason": "stop",
+                    }],
+                }
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+    # Extract user prompt and system message (Accumulating history)
+    history_parts = []
     system_msg = ""
     extracted_cwd = None
 
     for m in messages:
         role = m.get("role")
         content = m.get("content", "")
-        
-        # Normalize content to a single string for pattern matching
-        # Claude Code often sends an array of blocks for content
-        content_text = ""
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    content_text += block.get("text", "") + "\n"
-                elif isinstance(block, str):
-                    content_text += block + "\n"
-        else:
-            content_text = str(content)
+
+        content_text = _normalize_content(content)
 
         if role == "system":
-            # Append to system_msg in case there are multiple blocks
             system_msg += content_text + "\n"
-            
-            # Try to extract CWD from system message (Claude Code style)
+            # ... (CWD extraction logic remains)
             if "working directory: " in content_text:
                 try:
-                    # Look for the path after "working directory: "
-                    # This pattern is common in Claude Code environment section
                     parts = content_text.split("working directory: ", 1)
-                    # Take everything until the next line break
                     path_part = parts[1].split("\n", 1)[0].strip()
-                    # Clean up trailing punctuation, quotes or markdown artifacts
                     path_part = path_part.rstrip('."\' ')
                     if path_part:
                         extracted_cwd = path_part
-                        logger.info(f"Extracted CWD from system prompt: {extracted_cwd}")
-                except Exception as e:
-                    logger.warning(f"Failed to extract CWD: {e}")
+                except Exception: pass
         elif role == "user":
-            prompt = content_text
+            history_parts.append(f"User: {content_text}")
+        elif role == "assistant":
+            history_parts.append(f"Assistant: {content_text}")
 
-    # Check if we should stream
-    stream = body.get("stream", False)
-
-    # Resolve agent name from model field (e.g. "acople/claude" -> "claude")
-    full_model = body.get("model", _DEFAULT_AGENT or "claude")
-    agent_name = full_model.split("/")[-1] if "/" in full_model else full_model
+    prompt = "\n\n".join(history_parts)
 
     async def openai_stream():
         try:
@@ -356,24 +591,20 @@ async def openai_compatibility(request: Request):
 
             def reg(p): ACTIVE_PROCESSES[session_id] = p
 
-            # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long.
-            # Instead of stripping, we merge into the main prompt so the agent still
-            # gets its tool instructions without hitting the Windows CMD limit.
             effective_system = system_msg
             effective_prompt = prompt
             if sys.platform == "win32" and system_msg and (len(system_msg) + len(prompt)) > 1000:
                 effective_prompt = f"[SYSTEM INSTRUCTIONS]\n{system_msg}\n\n[USER REQUEST]\n{prompt}"
                 effective_system = None
 
-            # Queue to decouple bridge events from the SSE generator
             queue: asyncio.Queue = asyncio.Queue()
             SENTINEL = object()
 
             async def _producer():
                 try:
                     async for event in active.run(
-                        effective_prompt, 
-                        system=effective_system, 
+                        effective_prompt,
+                        system=effective_system,
                         on_start=reg,
                         cwd=extracted_cwd
                     ):
@@ -385,14 +616,11 @@ async def openai_compatibility(request: Request):
 
             producer_task = asyncio.create_task(_producer())
 
-            # Consumer: relay events to SSE, send keep-alive every 5s to prevent timeout
             try:
                 while True:
                     try:
                         event = await asyncio.wait_for(queue.get(), timeout=5.0)
                     except asyncio.TimeoutError:
-                        # Send an empty OpenAI chunk to keep the connection alive
-                        # (SSE comments can confuse some parsers like NullClaw)
                         keepalive = {
                             "id": session_id,
                             "object": "chat.completion.chunk",
@@ -445,9 +673,6 @@ async def openai_compatibility(request: Request):
         try:
             active = Acople(agent_name)
 
-            # NOTE: On Windows, we avoid passing system_msg to the CLI if it's too long
-            # Instead of stripping it, we merge it into the main prompt so the agent
-            # still gets its tool instructions without hitting the Windows CMD limit.
             effective_system = system_msg
             effective_prompt = prompt
             if sys.platform == "win32" and system_msg and (len(system_msg) + len(prompt)) > 1000:
@@ -455,7 +680,7 @@ async def openai_compatibility(request: Request):
                 effective_system = None
 
             async for event in active.run(
-                effective_prompt, 
+                effective_prompt,
                 system=effective_system,
                 cwd=extracted_cwd
             ):

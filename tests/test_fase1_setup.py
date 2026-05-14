@@ -76,7 +76,7 @@ class TestFase1Setup:
         try:
             import acople
             assert hasattr(acople, "__version__")
-            assert acople.__version__ == "1.2.0"
+            assert acople.__version__ == "1.3.0"
         finally:
             sys.path.pop(0)
 

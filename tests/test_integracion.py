@@ -20,7 +20,7 @@ class TestIntegracionCompleta:
         sys.path.insert(0, str(Path(__file__).parent.parent))
         try:
             import acople
-            assert acople.__version__ == "1.2.0"
+            assert acople.__version__ == "1.3.0"
         finally:
             sys.path.pop(0)
 

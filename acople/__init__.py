@@ -33,8 +33,25 @@ from .image_bridge import (
     ImageConfig,
     ImageResult,
 )
+_session_names = [
+    "SessionManager",
+    "resolve_session_id",
+    "validate_session_id",
+    "process_system_messages",
+]
 
-__version__ = "1.2.0"
+try:
+    from .session import (  # noqa: F401
+        SessionManager,
+        process_system_messages,
+        resolve_session_id,
+        validate_session_id,
+    )
+    _HAS_SESSION = True
+except ImportError:
+    _HAS_SESSION = False
+
+__version__ = "1.3.0"
 
 __all__ = [
     "Acople",
@@ -53,3 +70,6 @@ __all__ = [
     "from_env",
     "get_config",
 ]
+
+if _HAS_SESSION:
+    __all__.extend(_session_names)
