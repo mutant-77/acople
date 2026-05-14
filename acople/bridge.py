@@ -61,7 +61,7 @@ class AgentConfig:
 AGENT_CONFIGS: dict[str, AgentConfig] = {
     "claude": AgentConfig(
         bin="claude",
-        args=["--output-format", "stream-json", "--no-color"],
+        args=["--output-format", "stream-json"],
         prompt_flag="--print",
         stream_format="json",
         max_chars=20_000,
@@ -92,7 +92,7 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
     ),
     "qwen": AgentConfig(
         bin="qwen",
-        args=["--no-color"],
+        args=[],
         prompt_flag="-p",
         stream_format="plain",
         max_chars=15_000,

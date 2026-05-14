@@ -89,6 +89,18 @@ Acople is now production-ready. You can configure these environment variables:
 
 ---
 
+## Persistent Session Memory 🧠 (NEW)
+
+Acople now features an intelligent persistence system (**Compactor**) enabled by default, turning your CLI agents into long-term memory assistants:
+
+- **Automatic Folder Context:** When working on a project (CWD), Acople automatically associates and remembers previous conversations based on your file location.
+- **Infinite History (Sliding Window):** Intelligently manages context to keep the most relevant messages even in very long chat sessions.
+- **Cross-Agent Memory:** You can start a complex task with Kilo and then switch to Claude to finish it; the memory will persist seamlessly as it is tied to your project, not the agent.
+- **Ephemeral Location:** Everything is stored locally in `./.acople/sessions.db`. This folder is **automatically deleted every time you restart the server**, ensuring a clean slate on every start.
+- **Configuration:** Enabled by default. You can disable it by setting the environment variable `ACOPLE_SESSIONS="false"` if you prefer stateless mode.
+
+---
+
 ## API Endpoints 🌐
 
 | Endpoint | What it does | When to use it |

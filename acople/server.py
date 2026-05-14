@@ -19,10 +19,12 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -99,10 +101,26 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("[--] Ningun agente en PATH")
 
-        if os.environ.get("ACOPLE_SESSIONS", "").lower() in ("true", "1", "yes"):
+        if os.environ.get("ACOPLE_SESSIONS", "true").lower() not in ("false", "0", "no"):
             from acople.session import SessionManager
-            _session_manager = SessionManager()
-            logger.info("[OK] COMPACTOR session module initialized")
+            
+            # Localized & Ephemeral Logic:
+            # 1. Usar .acople/sessions.db en el CWD actual
+            local_db_dir = Path.cwd() / ".acople"
+            local_db_path = local_db_dir / "sessions.db"
+            
+            # 2. Borrar en cada arranque para pizarra limpia
+            if local_db_dir.exists():
+                logger.info(f"Limpiando memoria previa en {local_db_dir}...")
+                import shutil
+                try:
+                    shutil.rmtree(local_db_dir)
+                except Exception as e:
+                    logger.warning(f"No se pudo limpiar .acople: {e}")
+            
+            local_db_dir.mkdir(parents=True, exist_ok=True)
+            _session_manager = SessionManager(local_db_path)
+            logger.info(f"[OK] Memoria local efímera activada en: {local_db_path}")
     except Exception as e:
         logger.error(f"Error inicializando: {e}", exc_info=True)
         _session_manager = None
@@ -248,113 +266,33 @@ def diagnose():
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    """Chat full con todos los parámetros."""
+    """Chat avanzado usando el workflow unificado (Pipeline Senior)."""
     if len(ACTIVE_PROCESSES) >= MAX_CONCURRENT:
         raise HTTPException(status_code=429, detail=f"Max {MAX_CONCURRENT} concurrent sessions")
 
-    try:
-        validate_prompt(req.prompt)
-        validate_cwd(req.cwd)
-        validate_agent_name(req.agent)
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    agent_name = req.agent or _DEFAULT_AGENT
+    if not agent_name:
+        raise HTTPException(status_code=400, detail="No agent available")
 
-    async def event_stream():
-        agent_name = req.agent or _DEFAULT_AGENT
+    # Adaptar ChatRequest a formato de lista de mensajes
+    messages = [{"role": "user", "content": req.prompt}]
+    if req.system:
+        messages.insert(0, {"role": "system", "content": req.system})
 
-        if not agent_name:
-            yield BridgeEvent(EventType.ERROR, {"message": "Ningún agente disponible"}).to_sse()
-            return
+    workflow = _unified_chat_workflow(
+        messages=messages,
+        agent_name=agent_name,
+        session_id=req.session_id,
+        cwd=req.cwd,
+        model=req.model
+    )
 
-        # ═══ SESSION PATH ═══
-        if _session_manager:
-            session_id = req.session_id or str(uuid.uuid4())
-            session_row = _session_manager.get_or_create(session_id)
-
-            metadata = {}
-            if req.cwd:
-                metadata["cwd"] = req.cwd
-            metadata["agent"] = agent_name
-            _session_manager.update_metadata(session_id, **metadata)
-
-            _session_manager.add_message(session_id, "user", req.prompt)
-
-            compiled = _session_manager.compile(
-                session_id=session_id,
-                agent=agent_name,
-            )
-
-            process_pid = f"proc_{session_id}_{uuid.uuid4().hex[:8]}"
-
-            def register(proc):
-                ACTIVE_PROCESSES[process_pid] = proc
-
-            response_content = ""
-            effective_cwd = req.cwd or session_row.get("cwd") or None
-            try:
-                active = Acople(agent_name)
-                if req.model:
-                    logger.info(f"Model selection no implementado aún: {req.model}")
-
-                async for event in active.run(
-                    prompt=compiled,
-                    cwd=effective_cwd,
-                    system=None,
-                    timeout=req.timeout,
-                    on_start=register,
-                ):
-                    if event.type == EventType.TOKEN:
-                        text = event.data.get("text", "")
-                        response_content += text
-                    yield event.to_sse()
-                
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"FINAL COMPILED PROMPT SENT TO AGENT:\n{compiled[:500]}...\n[...]\n...{compiled[-500:]}")
-
-            except AgentNotFoundError as e:
-                yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
-            except asyncio.CancelledError:
-                yield BridgeEvent(EventType.DONE, {"reason": "cancelled"}).to_sse()
-            except Exception as e:
-                yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
-            finally:
-                ACTIVE_PROCESSES.pop(process_pid, None)
-
-            if response_content:
-                _session_manager.add_message(session_id, "assistant", response_content)
-            return
-
-        # ═══ LEGACY PATH (sin sesiones) ═══
-        session_id = str(uuid.uuid4())
-
-        def register(proc):
-            ACTIVE_PROCESSES[session_id] = proc
-
-        try:
-            active = Acople(agent_name)
-            if req.model:
-                logger.info(f"Model selection no implementado aún: {req.model}")
-
-            async for event in active.run(
-                prompt=req.prompt,
-                cwd=req.cwd,
-                system=req.system,
-                timeout=req.timeout,
-                on_start=register
-            ):
-                yield event.to_sse()
-
-        except AgentNotFoundError as e:
-            yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
-        except asyncio.CancelledError:
-            yield BridgeEvent(EventType.DONE, {"reason": "cancelled"}).to_sse()
-        except Exception as e:
-            yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
-        finally:
-            ACTIVE_PROCESSES.pop(session_id, None)
+    async def chat_sse():
+        async for event in workflow:
+            yield event.to_sse()
 
     return StreamingResponse(
-        event_stream(),
+        chat_sse(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -393,80 +331,99 @@ def _get_max_history(request: Request) -> int:
     return 10
 
 
-async def _stream_with_session(agent_name, compiled, cwd, session_id, session_manager):
-    """Streaming SSE con persistencia de sesión (COMPACTOR)."""
+async def _unified_chat_workflow(
+    messages: list[dict],
+    agent_name: str,
+    session_id: str | None = None,
+    cwd: str | None = None,
+    max_history: int = 10,
+    model: str | None = None,
+) -> AsyncIterator[BridgeEvent]:
+    """
+    Workflow unificado (Pipeline Senior) para el manejo de chats.
+    Centraliza: Identidad, Memoria, Ejecución y Persistencia.
+    """
+    # 1. Normalización de Identidad y CWD
+    sys_prompt_text, extracted_cwd = process_system_messages(messages)
+    effective_cwd = cwd or extracted_cwd
+    
+    # 2. Resolución de Sesión (si el manager está activo)
+    final_session_id = session_id
+    compiled_prompt = ""
+    
+    if _session_manager:
+        if not final_session_id:
+            # Fallback a CWD-based ID para persistencia automática por carpeta
+            from acople import resolve_session_id
+            final_session_id = resolve_session_id({}, messages, agent=agent_name, cwd=effective_cwd)
+        
+        _session_manager.get_or_create(final_session_id)
+        
+        # Actualizar metadatos del proyecto
+        metadata = {"agent": agent_name, "model": model or agent_name}
+        if effective_cwd:
+            metadata["cwd"] = effective_cwd
+            metadata["project_hash"] = hashlib.md5(effective_cwd.encode()).hexdigest()[:12]
+        _session_manager.update_metadata(final_session_id, **metadata)
+        
+        # Sincronizar e Historial (Compactor)
+        compiled_prompt = _session_manager.compile(
+            session_id=final_session_id,
+            incoming=messages,
+            agent=agent_name,
+            max_history=max_history
+        )
+        
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"UNIFIED PROMPT (len={len(compiled_prompt)}): {compiled_prompt[:200]}...")
+    else:
+        # Modo Legacy (sin sesiones activas)
+        history_parts = []
+        for m in messages:
+            role = m.get("role")
+            content = _normalize_content(m.get("content", ""))
+            if role == "user":
+                history_parts.append(f"User: {content}")
+            elif role == "assistant":
+                history_parts.append(f"Assistant: {content}")
+        compiled_prompt = "\n\n".join(history_parts)
+        final_session_id = str(uuid.uuid4())
+
+    # 3. Ejecución del Agente
+    active = Acople(agent_name)
+    process_pid = final_session_id
+    
+    def register_proc(p):
+        ACTIVE_PROCESSES[process_pid] = p
+
     response_content = ""
-    done_event = {
-        "id": session_id,
-        "object": "chat.completion.chunk",
-        "created": int(time.time()),
-        "model": agent_name,
-    }
-
     try:
-        active = Acople(agent_name)
-        process_pid = f"proc_{session_id}_{uuid.uuid4().hex[:8]}"
-
-        def reg(p):
-            ACTIVE_PROCESSES[process_pid] = p
-
-        queue: asyncio.Queue = asyncio.Queue()
-        sentinel = object()
-
-        async def _producer():
-            try:
-                async for event in active.run(compiled, cwd=cwd, on_start=reg):
-                    await queue.put(event)
-            except Exception as e:
-                logger.error(f"Producer error: {e}")
-            finally:
-                await queue.put(sentinel)
-
-        producer_task = asyncio.create_task(_producer())
-
-        try:
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    keepalive = {**done_event, "choices": [{"delta": {"content": ""}, "index": 0, "finish_reason": None}]}
-                    yield f"data: {json.dumps(keepalive)}\n\n"
-                    continue
-
-                if event is sentinel:
-                    break
-
-                if event.type == EventType.TOKEN:
-                    text = event.data.get("text", "")
-                    response_content += text
-                    chunk = {**done_event, "choices": [{"delta": {"content": text}, "index": 0, "finish_reason": None}]}
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                elif event.type in (EventType.TOOL_USE, EventType.TOOL_RESULT):
-                    if event.type == EventType.TOOL_USE:
-                        session_manager.add_message(session_id, "tool_use", json.dumps(event.data))
-                    else:
-                        session_manager.add_message(session_id, "tool_result", json.dumps(event.data))
-                elif event.type == EventType.DONE:
-                    chunk = {**done_event, "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]}
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                    yield "data: [DONE]\n\n"
-        finally:
-            producer_task.cancel()
-            ACTIVE_PROCESSES.pop(process_pid, None)
-
-        if response_content:
-            session_manager.add_message(session_id, "assistant", response_content)
-
+        async for event in active.run(
+            prompt=compiled_prompt,
+            cwd=effective_cwd,
+            on_start=register_proc
+        ):
+            if event.type == EventType.TOKEN:
+                response_content += event.data.get("text", "")
+            yield event
+            
     except Exception as e:
-        logger.error(f"OpenAI Stream Error: {e}")
-        yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n"
-        yield "data: [DONE]\n\n"
+        logger.error(f"Unified workflow error for {agent_name}: {e}")
+        yield BridgeEvent(EventType.ERROR, {"message": str(e)})
+    finally:
+        ACTIVE_PROCESSES.pop(process_pid, None)
+        # 4. Persistencia Final de la respuesta
+        if _session_manager and response_content and final_session_id:
+            _session_manager.add_message(final_session_id, "assistant", response_content)
+
+
+
 
 
 @app.post("/v1/chat/completions")
 async def openai_compatibility(request: Request):
     """
-    OpenAI-compatible endpoint. Turns Acople into a local AI provider.
+    OpenAI-compatible endpoint. Usando el Workflow Unificado (Pipeline Senior).
     """
     try:
         body = await request.json()
@@ -478,264 +435,112 @@ async def openai_compatibility(request: Request):
         raise HTTPException(status_code=400, detail="No messages provided")
 
     stream = body.get("stream", False)
-
     full_model = body.get("model", _DEFAULT_AGENT or "claude")
-    agent_name = full_model.split("/")[-1] if "/" in full_model else full_model
+    
+    # Normalización Senior: Mapear nombre de modelo a binario de agente conocido
+    raw_name = full_model.split("/")[-1] if "/" in full_model else full_model
+    raw_name_lower = raw_name.lower()
+    
+    agent_name = None
+    if raw_name_lower.startswith("claude"):
+        agent_name = "claude"
+    elif raw_name_lower.startswith("qwen"):
+        agent_name = "qwen"
+    elif raw_name_lower.startswith("llama"):
+        agent_name = "llama"
+    elif raw_name_lower.startswith("kilo"):
+        agent_name = "kilo"
+    
+    # Fallback al agente por defecto si no hay coincidencia clara o el binario no existe
+    if not agent_name or not shutil.which(agent_name):
+        agent_name = _DEFAULT_AGENT or "claude"
+        
+    max_history = _get_max_history(request)
 
-    # ═══════════════════════════════════════════════════
-    # SESSION PATH (COMPACTOR) — activado vía feature flag
-    # ═══════════════════════════════════════════════════
-    if _session_manager:
-        headers = dict(request.headers)
-        
-        # 1. Extraer CWD primero
-        _, extracted_cwd = process_system_messages(messages)
-        
-        # 2. Resolver session_id usando el CWD real del cliente si existe
-        session_id = resolve_session_id(headers, messages, agent=agent_name, cwd=extracted_cwd)
-        _session_manager.get_or_create(session_id)
-        
-        metadata = {}
-        if extracted_cwd:
-            metadata["cwd"] = extracted_cwd
-        metadata["agent"] = agent_name
-        metadata["model"] = full_model
-        if extracted_cwd:
-            metadata["project_hash"] = hashlib.md5(extracted_cwd.encode()).hexdigest()[:12]
-        if metadata:
-            _session_manager.update_metadata(session_id, **metadata)
+    workflow = _unified_chat_workflow(
+        messages=messages,
+        agent_name=agent_name,
+        max_history=max_history,
+        model=full_model
+    )
 
-        max_history = _get_max_history(request)
-        compiled = _session_manager.compile(
-            session_id=session_id,
-            incoming=messages,
-            agent=agent_name,
-            max_history=max_history,
-        )
-        
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"SESSION PROMPT (len={len(compiled)}):\n{compiled[:500]}...\n[...]\n...{compiled[-500:]}")
-
-        if stream:
-            return StreamingResponse(
-                _stream_with_session(agent_name, compiled, extracted_cwd, session_id, _session_manager),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "X-Accel-Buffering": "no",
-                    "X-Session-ID": session_id,
-                },
-            )
-        else:
-            response_content = ""
+    if stream:
+        async def sse_adapter():
             try:
-                active = Acople(agent_name)
-                process_pid_nonstream = f"proc_{session_id}_{uuid.uuid4().hex[:8]}"
-
-                def register_ns(proc):
-                    ACTIVE_PROCESSES[process_pid_nonstream] = proc
-
-                async for event in active.run(compiled, cwd=extracted_cwd, on_start=register_ns):
-                    if event.type == EventType.TOKEN:
-                        response_content += event.data.get("text", "")
-                ACTIVE_PROCESSES.pop(process_pid_nonstream, None)
-                if response_content:
-                    _session_manager.add_message(session_id, "assistant", response_content)
-                return {
-                    "id": session_id,
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": agent_name,
-                    "choices": [{
-                        "message": {"role": "assistant", "content": response_content},
-                        "index": 0,
-                        "finish_reason": "stop",
-                    }],
-                }
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=str(e))
-
-    # Extract user prompt and system message (Accumulating history)
-    history_parts = []
-    system_msg = ""
-    extracted_cwd = None
-
-    for m in messages:
-        role = m.get("role")
-        content = m.get("content", "")
-
-        content_text = _normalize_content(content)
-
-        if role == "system":
-            system_msg += content_text + "\n"
-            # ... (CWD extraction logic remains)
-            if "working directory: " in content_text:
-                try:
-                    parts = content_text.split("working directory: ", 1)
-                    path_part = parts[1].split("\n", 1)[0].strip()
-                    path_part = path_part.rstrip('."\' ')
-                    if path_part:
-                        extracted_cwd = path_part
-                except Exception: pass
-        elif role == "user":
-            history_parts.append(f"User: {content_text}")
-        elif role == "assistant":
-            history_parts.append(f"Assistant: {content_text}")
-
-    prompt = "\n\n".join(history_parts)
-
-    async def openai_stream():
-        try:
-            active = Acople(agent_name)
-            session_id = str(uuid.uuid4())
-
-            def reg(p): ACTIVE_PROCESSES[session_id] = p
-
-            effective_system = system_msg
-            effective_prompt = prompt
-            if sys.platform == "win32" and system_msg and (len(system_msg) + len(prompt)) > 1000:
-                effective_prompt = f"[SYSTEM INSTRUCTIONS]\n{system_msg}\n\n[USER REQUEST]\n{prompt}"
-                effective_system = None
-
-            queue: asyncio.Queue = asyncio.Queue()
-            SENTINEL = object()
-
-            async def _producer():
-                try:
-                    async for event in active.run(
-                        effective_prompt,
-                        system=effective_system,
-                        on_start=reg,
-                        cwd=extracted_cwd
-                    ):
-                        await queue.put(event)
-                except Exception as e:
-                    logger.error(f"Producer error: {e}")
-                finally:
-                    await queue.put(SENTINEL)
-
-            producer_task = asyncio.create_task(_producer())
-
-            try:
-                while True:
-                    try:
-                        event = await asyncio.wait_for(queue.get(), timeout=5.0)
-                    except asyncio.TimeoutError:
-                        keepalive = {
-                            "id": session_id,
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": agent_name,
-                            "choices": [{"delta": {"content": ""}, "index": 0, "finish_reason": None}]
-                        }
-                        yield f"data: {json.dumps(keepalive)}\n\n"
-                        continue
-
-                    if event is SENTINEL:
-                        break
-
+                async for event in workflow:
                     if event.type == EventType.TOKEN:
                         chunk = {
-                            "id": session_id,
+                            "id": "chatcmpl-" + uuid.uuid4().hex[:12],
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
-                            "model": agent_name,
-                            "choices": [{
-                                "delta": {"content": event.data.get("text", "")},
-                                "index": 0,
-                                "finish_reason": None
-                            }]
+                            "model": full_model,
+                            "choices": [{"delta": {"content": event.data.get("text", "")}, "index": 0, "finish_reason": None}]
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
                     elif event.type == EventType.DONE:
                         chunk = {
-                            "id": session_id,
+                            "id": "chatcmpl-" + uuid.uuid4().hex[:12],
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
-                            "model": agent_name,
+                            "model": full_model,
                             "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
                         yield "data: [DONE]\n\n"
-            finally:
-                producer_task.cancel()
-                ACTIVE_PROCESSES.pop(session_id, None)
-
-        except Exception as e:
-            logger.error(f"OpenAI Shim Error: {e}")
-            yield f"data: {json.dumps({'error': {'message': str(e)}})}\n\n"
-            yield "data: [DONE]\n\n"
-
-    if stream:
-        return StreamingResponse(openai_stream(), media_type="text/event-stream")
+                    elif event.type == EventType.ERROR:
+                        yield f"data: {json.dumps({'error': event.data})}\n\n"
+            except Exception as e:
+                logger.error(f"SSE Adapter error: {e}")
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                yield "data: [DONE]\n\n"
+        
+        return StreamingResponse(
+            sse_adapter(), 
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        )
     else:
-        content = ""
-        try:
-            active = Acople(agent_name)
-
-            effective_system = system_msg
-            effective_prompt = prompt
-            if sys.platform == "win32" and system_msg and (len(system_msg) + len(prompt)) > 1000:
-                effective_prompt = f"[SYSTEM INSTRUCTIONS]\n{system_msg}\n\n[USER REQUEST]\n{prompt}"
-                effective_system = None
-
-            async for event in active.run(
-                effective_prompt,
-                system=effective_system,
-                cwd=extracted_cwd
-            ):
-                if event.type == EventType.TOKEN:
-                    content += event.data.get("text", "")
-
-            return {
-                "id": str(uuid.uuid4()),
-                "object": "chat.completion",
-                "created": int(time.time()),
-                "model": agent_name,
-                "choices": [{
-                    "message": {"role": "assistant", "content": content},
-                    "index": 0,
-                    "finish_reason": "stop"
-                }]
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        full_response = ""
+        async for event in workflow:
+            if event.type == EventType.TOKEN:
+                full_response += event.data.get("text", "")
+        
+        return {
+            "id": "chatcmpl-" + uuid.uuid4().hex[:12],
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": full_model,
+            "choices": [{
+                "message": {"role": "assistant", "content": full_response},
+                "index": 0,
+                "finish_reason": "stop"
+            }]
+        }
 
 
 @app.post("/chat/simple")
 async def chat_simple(req: SimpleChatRequest):
-    """Chat minimal - solo prompt."""
+    """Chat minimal - ahora con soporte de memoria unificado."""
     if len(ACTIVE_PROCESSES) >= MAX_CONCURRENT:
         raise HTTPException(status_code=429, detail=f"Max {MAX_CONCURRENT} concurrent sessions")
 
-    try:
-        validate_prompt(req.prompt)
-    except ValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    agent_name = _DEFAULT_AGENT
+    if not agent_name:
+        raise HTTPException(status_code=400, detail="No agent available")
 
-    async def event_stream():
-        if not _DEFAULT_AGENT:
-            yield BridgeEvent(EventType.ERROR, {"message": "Ningún agente disponible"}).to_sse()
-            return
+    messages = [{"role": "user", "content": req.prompt}]
+    
+    workflow = _unified_chat_workflow(
+        messages=messages,
+        agent_name=agent_name
+    )
 
-        session_id = str(uuid.uuid4())
-
-        def register(proc):
-            ACTIVE_PROCESSES[session_id] = proc
-
-        try:
-            active = Acople(_DEFAULT_AGENT)
-            async for event in active.run(req.prompt, on_start=register):
-                yield event.to_sse()
-        except AgentNotFoundError as e:
-            yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
-        except Exception as e:
-            yield BridgeEvent(EventType.ERROR, {"message": str(e)}).to_sse()
-        finally:
-            ACTIVE_PROCESSES.pop(session_id, None)
+    async def simple_sse():
+        async for event in workflow:
+            yield event.to_sse()
 
     return StreamingResponse(
-        event_stream(),
+        simple_sse(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

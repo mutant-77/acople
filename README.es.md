@@ -89,6 +89,18 @@ Ahora Acople es apto para producción. Podés configurar estas variables de ento
 
 ---
 
+## Memoria Persistente de Sesión 🧠 (NUEVO)
+
+Acople ahora incluye un sistema de persistencia inteligente (**Compactor**) activo por defecto que transforma tus agentes CLI en asistentes con memoria a largo plazo:
+
+- **Contexto automático por carpeta:** Al trabajar en un proyecto (CWD), Acople asocia y recuerda conversaciones previas automáticamente basándose en la ubicación de tus archivos.
+- **Historial infinito (Sliding Window):** Gestiona inteligentemente el contexto para mantener los mensajes más relevantes incluso en sesiones de chat muy extensas.
+- **Memoria entre Agentes:** Podés empezar una tarea compleja con Kilo y luego cambiar a Claude para terminarla; la memoria persistirá sin problemas ya que está vinculada a tu proyecto, no al agente.
+- **Ubicación Efímera:** Todo se guarda localmente en `./.acople/sessions.db`. Esta carpeta se **borra automáticamente cada vez que reiniciás el servidor**, garantizando una pizarra limpia en cada arranque.
+- **Configuración:** Viene activado por defecto. Podés desactivarlo configurando la variable de entorno `ACOPLE_SESSIONS="false"` si preferís un modo sin estado.
+
+---
+
 ## API Endpoints 🌐
 
 | Endpoint | Qué hace | Cuándo usarlo |
