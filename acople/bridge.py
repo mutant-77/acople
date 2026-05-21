@@ -478,6 +478,7 @@ class Acople:
             logger.error(f"Cleanup error for {proc.pid}: {e}")
 
     async def _read_stream(self, proc: asyncio.subprocess.Process) -> AsyncIterator[BridgeEvent]:
+        from acople.normalize import parse_plain_tool_markers
         cfg = self.config
         buffer = ""
 
@@ -509,12 +510,30 @@ class Acople:
                         if event:
                             yield event
             else:
-                yield BridgeEvent(EventType.TOKEN, {"text": chunk})
+                # Plain-text: buffereamos para detectar markers <acople-tool>.
+                buffer += chunk
+                if len(buffer) > 5 * 1024 * 1024:
+                    yield BridgeEvent(EventType.ERROR, {"message": "Output too long"})
+                    buffer = ""
+                    continue
+                events, buffer = parse_plain_tool_markers(buffer, final=False)
+                for kind, data in events:
+                    if kind == "tool_use":
+                        yield BridgeEvent(EventType.TOOL_USE, data)
+                    else:
+                        yield BridgeEvent(EventType.TOKEN, data)
 
         if cfg.stream_format == "json" and buffer.strip():
             event = parse_claude_json_line(buffer.strip())
             if event:
                 yield event
+        elif cfg.stream_format != "json" and buffer:
+            events, _ = parse_plain_tool_markers(buffer, final=True)
+            for kind, data in events:
+                if kind == "tool_use":
+                    yield BridgeEvent(EventType.TOOL_USE, data)
+                else:
+                    yield BridgeEvent(EventType.TOKEN, data)
 
         if proc.stderr:
             try:

@@ -33,6 +33,13 @@ from .image_bridge import (
     ImageConfig,
     ImageResult,
 )
+from .normalize import (
+    TOOL_CLOSE,
+    TOOL_OPEN,
+    format_tool_catalog,
+    normalize_incoming_messages,
+    parse_plain_tool_markers,
+)
 _session_names = [
     "SessionManager",
     "resolve_session_id",
@@ -69,6 +76,11 @@ __all__ = [
     "detect_models",
     "from_env",
     "get_config",
+    "TOOL_OPEN",
+    "TOOL_CLOSE",
+    "format_tool_catalog",
+    "normalize_incoming_messages",
+    "parse_plain_tool_markers",
 ]
 
 if _HAS_SESSION:

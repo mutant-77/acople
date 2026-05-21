@@ -46,6 +46,7 @@ from acople import (
     resolve_session_id,
 )
 from acople.image_bridge import ImageBridge, ImageConfig
+from acople.normalize import format_tool_catalog, normalize_incoming_messages
 from acople.security import (
     ValidationError,
     validate_agent_name,
@@ -84,6 +85,22 @@ def _normalize_content(content) -> str:
     s = str(content).strip()
     s = s.replace("\r\n", "\n")
     return s
+
+def _tool_use_to_openai(event_data: dict, index: int) -> dict:
+    """Convert a BridgeEvent(TOOL_USE) payload into OpenAI tool_call shape."""
+    args = event_data.get("input", {})
+    if not isinstance(args, str):
+        args = json.dumps(args, ensure_ascii=False)
+    return {
+        "index": index,
+        "id": "call_" + uuid.uuid4().hex[:24],
+        "type": "function",
+        "function": {
+            "name": event_data.get("tool", "unknown"),
+            "arguments": args,
+        },
+    }
+
 
 _DEFAULT_AGENT: str | None = None
 _session_manager = None
@@ -338,11 +355,16 @@ async def _unified_chat_workflow(
     cwd: str | None = None,
     max_history: int = 10,
     model: str | None = None,
+    tools: list[dict] | None = None,
+    tool_choice: str | dict | None = None,
 ) -> AsyncIterator[BridgeEvent]:
     """
     Workflow unificado (Pipeline Senior) para el manejo de chats.
-    Centraliza: Identidad, Memoria, Ejecución y Persistencia.
+    Centraliza: Normalización, Identidad, Memoria, Ejecución y Persistencia.
     """
+    # 0. Normalización agnóstica: OpenAI/Anthropic/Ollama → formato interno.
+    messages = normalize_incoming_messages(messages)
+
     # 1. Normalización de Identidad y CWD
     sys_prompt_text, extracted_cwd = process_system_messages(messages)
     effective_cwd = cwd or extracted_cwd
@@ -377,26 +399,41 @@ async def _unified_chat_workflow(
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"UNIFIED PROMPT (len={len(compiled_prompt)}): {compiled_prompt[:200]}...")
     else:
-        # Modo Legacy (sin sesiones activas)
+        # Modo Legacy (sin sesiones activas) — messages ya está normalizado
         history_parts = []
         for m in messages:
             role = m.get("role")
-            content = _normalize_content(m.get("content", ""))
+            content = m.get("content", "")
             if role == "user":
                 history_parts.append(f"User: {content}")
             elif role == "assistant":
                 history_parts.append(f"Assistant: {content}")
+            elif role == "tool_use":
+                history_parts.append(f"[Tool: {content}]")
+            elif role == "tool_result":
+                history_parts.append(f"[Tool Result: {content}]")
         compiled_prompt = "\n\n".join(history_parts)
         final_session_id = str(uuid.uuid4())
+
+    # 2.b Inyección del catálogo de tools (si el cliente las registró)
+    tool_catalog = format_tool_catalog(tools)
+    if tool_catalog:
+        choice_hint = ""
+        if isinstance(tool_choice, str) and tool_choice in ("required", "auto", "none"):
+            choice_hint = f"\nTool selection policy: {tool_choice}."
+        elif isinstance(tool_choice, dict) and tool_choice.get("function", {}).get("name"):
+            choice_hint = f"\nThe client requests you call: {tool_choice['function']['name']}."
+        compiled_prompt = f"{tool_catalog}{choice_hint}\n\n{compiled_prompt}"
 
     # 3. Ejecución del Agente
     active = Acople(agent_name)
     process_pid = final_session_id
-    
+
     def register_proc(p):
         ACTIVE_PROCESSES[process_pid] = p
 
     response_content = ""
+    captured_tool_uses: list[dict] = []
     try:
         async for event in active.run(
             prompt=compiled_prompt,
@@ -405,16 +442,28 @@ async def _unified_chat_workflow(
         ):
             if event.type == EventType.TOKEN:
                 response_content += event.data.get("text", "")
+            elif event.type == EventType.TOOL_USE:
+                captured_tool_uses.append(dict(event.data))
             yield event
-            
+
     except Exception as e:
         logger.error(f"Unified workflow error for {agent_name}: {e}")
         yield BridgeEvent(EventType.ERROR, {"message": str(e)})
     finally:
         ACTIVE_PROCESSES.pop(process_pid, None)
-        # 4. Persistencia Final de la respuesta
-        if _session_manager and response_content and final_session_id:
-            _session_manager.add_message(final_session_id, "assistant", response_content)
+        # 4. Persistencia final: texto del assistant y cada tool_use
+        if _session_manager and final_session_id:
+            if response_content:
+                _session_manager.add_message(final_session_id, "assistant", response_content)
+            for tu in captured_tool_uses:
+                try:
+                    _session_manager.add_message(
+                        final_session_id,
+                        "tool_use",
+                        json.dumps(tu, ensure_ascii=False),
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to persist tool_use: {e}")
 
 
 
@@ -436,6 +485,8 @@ async def openai_compatibility(request: Request):
 
     stream = body.get("stream", False)
     full_model = body.get("model", _DEFAULT_AGENT or "claude")
+    tools = body.get("tools") or None
+    tool_choice = body.get("tool_choice")
     
     # Normalización Senior: Mapear nombre de modelo a binario de agente conocido
     raw_name = full_model.split("/")[-1] if "/" in full_model else full_model
@@ -461,11 +512,15 @@ async def openai_compatibility(request: Request):
         messages=messages,
         agent_name=agent_name,
         max_history=max_history,
-        model=full_model
+        model=full_model,
+        tools=tools,
+        tool_choice=tool_choice,
     )
 
     if stream:
         async def sse_adapter():
+            tool_index = 0
+            has_tool_calls = False
             try:
                 async for event in workflow:
                     if event.type == EventType.TOKEN:
@@ -477,13 +532,26 @@ async def openai_compatibility(request: Request):
                             "choices": [{"delta": {"content": event.data.get("text", "")}, "index": 0, "finish_reason": None}]
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
-                    elif event.type == EventType.DONE:
+                    elif event.type == EventType.TOOL_USE:
+                        has_tool_calls = True
+                        tool_call = _tool_use_to_openai(event.data, tool_index)
+                        tool_index += 1
                         chunk = {
                             "id": "chatcmpl-" + uuid.uuid4().hex[:12],
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
                             "model": full_model,
-                            "choices": [{"delta": {}, "index": 0, "finish_reason": "stop"}]
+                            "choices": [{"delta": {"tool_calls": [tool_call]}, "index": 0, "finish_reason": None}]
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                    elif event.type == EventType.DONE:
+                        finish_reason = "tool_calls" if has_tool_calls else "stop"
+                        chunk = {
+                            "id": "chatcmpl-" + uuid.uuid4().hex[:12],
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": full_model,
+                            "choices": [{"delta": {}, "index": 0, "finish_reason": finish_reason}]
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
                         yield "data: [DONE]\n\n"
@@ -501,19 +569,28 @@ async def openai_compatibility(request: Request):
         )
     else:
         full_response = ""
+        collected_tool_calls: list[dict] = []
         async for event in workflow:
             if event.type == EventType.TOKEN:
                 full_response += event.data.get("text", "")
-        
+            elif event.type == EventType.TOOL_USE:
+                tc = _tool_use_to_openai(event.data, len(collected_tool_calls))
+                tc.pop("index", None)
+                collected_tool_calls.append(tc)
+
+        message: dict = {"role": "assistant", "content": full_response or None}
+        if collected_tool_calls:
+            message["tool_calls"] = collected_tool_calls
+
         return {
             "id": "chatcmpl-" + uuid.uuid4().hex[:12],
             "object": "chat.completion",
             "created": int(time.time()),
             "model": full_model,
             "choices": [{
-                "message": {"role": "assistant", "content": full_response},
+                "message": message,
                 "index": 0,
-                "finish_reason": "stop"
+                "finish_reason": "tool_calls" if collected_tool_calls else "stop"
             }]
         }
 
