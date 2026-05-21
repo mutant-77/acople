@@ -190,10 +190,13 @@ class ChatRequest(BaseModel):
     model: str | None = None
     timeout: float | None = None
     session_id: str | None = None
+    tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
 
 
 class SimpleChatRequest(BaseModel):
     prompt: str
+    agent: str | None = None
 
 
 class ImageGenerateRequest(BaseModel):
@@ -302,7 +305,9 @@ async def chat(req: ChatRequest):
         agent_name=agent_name,
         session_id=req.session_id,
         cwd=req.cwd,
-        model=req.model
+        model=req.model,
+        tools=req.tools,
+        tool_choice=req.tool_choice,
     )
 
     async def chat_sse():
@@ -430,6 +435,20 @@ async def _unified_chat_workflow(
     active = Acople(agent_name)
     process_pid = final_session_id
 
+    # Para agentes plain-text (opencode, gemini, codex…) el compiled_prompt
+    # incluye prefijos "User:"/"Assistant:" y todo el historial, lo que confunde
+    # al modelo subyacente (responde al contexto histórico en vez de a la tarea
+    # actual). Estos agentes tienen su propio manejo de contexto; les enviamos
+    # solo el último mensaje del usuario como prompt limpio.
+    if active.config.stream_format != "json":
+        raw_last = next(
+            (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
+            compiled_prompt,
+        )
+        agent_prompt = f"{tool_catalog}{raw_last}" if tool_catalog else raw_last
+    else:
+        agent_prompt = compiled_prompt
+
     def register_proc(p):
         ACTIVE_PROCESSES[process_pid] = p
 
@@ -437,7 +456,7 @@ async def _unified_chat_workflow(
     captured_tool_uses: list[dict] = []
     try:
         async for event in active.run(
-            prompt=compiled_prompt,
+            prompt=agent_prompt,
             cwd=effective_cwd,
             on_start=register_proc
         ):
@@ -602,12 +621,12 @@ async def chat_simple(req: SimpleChatRequest):
     if len(ACTIVE_PROCESSES) >= MAX_CONCURRENT:
         raise HTTPException(status_code=429, detail=f"Max {MAX_CONCURRENT} concurrent sessions")
 
-    agent_name = _DEFAULT_AGENT
+    agent_name = req.agent or _DEFAULT_AGENT
     if not agent_name:
         raise HTTPException(status_code=400, detail="No agent available")
 
     messages = [{"role": "user", "content": req.prompt}]
-    
+
     workflow = _unified_chat_workflow(
         messages=messages,
         agent_name=agent_name

@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import threading
@@ -16,6 +17,8 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+_ANSI_RE = re.compile(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 logger = logging.getLogger("acople")
 
@@ -61,7 +64,7 @@ class AgentConfig:
 AGENT_CONFIGS: dict[str, AgentConfig] = {
     "claude": AgentConfig(
         bin="claude",
-        args=["--output-format", "stream-json"],
+        args=["--output-format", "stream-json", "--verbose"],
         prompt_flag="--print",
         stream_format="json",
         max_chars=20_000,
@@ -69,26 +72,26 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
     "gemini": AgentConfig(
         bin="gemini",
         args=["--skip-trust"],
-        prompt_flag="",  # Empty means use stdin
+        prompt_flag=None,   # None = use stdin
         stream_format="plain",
     ),
     "codex": AgentConfig(
         bin="codex",
         args=["exec", "--skip-git-repo-check"],
-        prompt_flag="",
+        prompt_flag=None,   # None = use stdin
         stream_format="plain",
     ),
     "opencode": AgentConfig(
         bin="opencode",
-        args=["run"],
-        prompt_flag="",
-        stream_format="plain",
+        args=["run", "--format", "json", "--dangerously-skip-permissions"],
+        prompt_flag=None,   # None = use stdin
+        stream_format="opencode-json",
     ),
     "kilo": AgentConfig(
         bin="kilo",
-        args=["run"],
-        prompt_flag="",
-        stream_format="plain",
+        args=["run", "--format", "json", "--auto"],
+        prompt_flag=None,   # None = use stdin (fork of opencode, same behavior)
+        stream_format="opencode-json",
     ),
     "qwen": AgentConfig(
         bin="qwen",
@@ -167,8 +170,44 @@ def get_config(agent_name: str) -> AgentConfig:
 
 
 # ---------------------------------------------------------------------------
-# Parser de stream JSON (Claude Code)
+# Parsers de stream JSON
 # ---------------------------------------------------------------------------
+
+def parse_opencode_json_line(line: str) -> BridgeEvent | None:
+    """Parser para opencode --format json.
+
+    Schema confirmado (v1.15.6):
+      {"type":"step_start", ...}
+      {"type":"tool_use", "part":{"tool":"read", "state":{"status":"completed","input":{...},"output":"..."}}}
+      {"type":"step_finish", "part":{"reason":"tool-calls"|"stop"}}
+      {"type":"text", "part":{"text":"..."}}
+    """
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+
+    t = event.get("type", "")
+    part = event.get("part") or {}
+
+    if t == "text":
+        text = part.get("text", "")
+        if text:
+            return BridgeEvent(EventType.TOKEN, {"text": text})
+
+    elif t == "tool_use":
+        state = part.get("state") or {}
+        return BridgeEvent(EventType.TOOL_USE, {
+            "tool": part.get("tool", "unknown"),
+            "input": state.get("input") or {},
+        })
+
+    elif t == "step_finish":
+        if part.get("reason") == "stop":
+            return BridgeEvent(EventType.DONE, {})
+
+    return None
+
 
 def parse_claude_json_line(line: str) -> BridgeEvent | None:
     try:
@@ -343,12 +382,21 @@ class Acople:
         bin_cmd = self._resolve_bin(cfg.bin)
         cmd = [bin_cmd] + cfg.args
 
-        # En Windows, si el prompt es largo (> 4000), forzamos stdin aunque haya prompt_flag
-        # para evitar el límite de 8191 caracteres de la línea de comandos.
-        use_stdin = not cfg.prompt_flag or (os.name == "nt" and len(prompt) > 4000)
+        # prompt_flag semantics:
+        #   None  → use stdin
+        #   ""    → positional argument appended to cmd (e.g. opencode run "<prompt>")
+        #   "-p"  → flag+value pair (e.g. qwen -p "<prompt>")
+        #
+        # Windows fallback: if prompt > 4000 chars, force stdin regardless of flag mode
+        # to stay within the 8191-char command-line limit.
+        force_stdin = os.name == "nt" and len(prompt) > 4000
+        use_stdin = cfg.prompt_flag is None or force_stdin
 
-        if cfg.prompt_flag and not use_stdin:
-            cmd += [cfg.prompt_flag, prompt]
+        if not use_stdin:
+            if cfg.prompt_flag:
+                cmd += [cfg.prompt_flag, prompt]
+            else:
+                cmd += [prompt]
 
         # On Windows, executing .cmd or .bat directly can fail with WinError 193
         if os.name == 'nt' and (bin_cmd.lower().endswith('.cmd') or bin_cmd.lower().endswith('.bat')):
@@ -398,17 +446,20 @@ class Acople:
             if on_start:
                 on_start(proc)
 
-            # If the config has no prompt flag OR we forced stdin due to length, send via stdin
-            use_stdin = not self.config.prompt_flag or (os.name == "nt" and len(full_prompt) > 4000)
+            # Mirror the same logic as _build_cmd to decide whether stdin was used
+            use_stdin = self.config.prompt_flag is None or (os.name == "nt" and len(full_prompt) > 4000)
             if use_stdin:
                 proc.stdin.write(full_prompt.encode("utf-8", errors="replace"))
                 await proc.stdin.drain()
-                try:
-                    proc.stdin.close()
-                    if hasattr(proc.stdin, "wait_closed"):
-                        await proc.stdin.wait_closed()
-                except Exception:
-                    pass
+            # Cerrar stdin SIEMPRE: si lo usamos hay que terminar el flujo;
+            # si no lo usamos (prompt via flag) hay que evitar que el agente
+            # se quede esperando input fantasma.
+            try:
+                proc.stdin.close()
+                if hasattr(proc.stdin, "wait_closed"):
+                    await proc.stdin.wait_closed()
+            except Exception:
+                pass
 
             logger.info(f"PID: {proc.pid}")
         except Exception as e:
@@ -481,6 +532,7 @@ class Acople:
         from acople.normalize import parse_plain_tool_markers
         cfg = self.config
         buffer = ""
+        done_emitted = False
 
         while True:
             try:
@@ -495,7 +547,7 @@ class Acople:
 
             chunk = chunk_bytes.decode("utf-8", errors="replace")
 
-            if cfg.stream_format == "json":
+            if cfg.stream_format in ("json", "opencode-json"):
                 buffer += chunk
                 if len(buffer) > 5 * 1024 * 1024:
                     yield BridgeEvent(EventType.ERROR, {"message": "Output too long"})
@@ -506,12 +558,17 @@ class Acople:
                     line, buffer = buffer.split("\n", 1)
                     line = line.strip()
                     if line:
-                        event = parse_claude_json_line(line)
+                        if cfg.stream_format == "opencode-json":
+                            event = parse_opencode_json_line(line)
+                        else:
+                            event = parse_claude_json_line(line)
                         if event:
+                            if event.type == EventType.DONE:
+                                done_emitted = True
                             yield event
             else:
                 # Plain-text: buffereamos para detectar markers <acople-tool>.
-                buffer += chunk
+                buffer += _ANSI_RE.sub("", chunk)
                 if len(buffer) > 5 * 1024 * 1024:
                     yield BridgeEvent(EventType.ERROR, {"message": "Output too long"})
                     buffer = ""
@@ -523,11 +580,14 @@ class Acople:
                     else:
                         yield BridgeEvent(EventType.TOKEN, data)
 
-        if cfg.stream_format == "json" and buffer.strip():
-            event = parse_claude_json_line(buffer.strip())
+        if cfg.stream_format in ("json", "opencode-json") and buffer.strip():
+            if cfg.stream_format == "opencode-json":
+                event = parse_opencode_json_line(buffer.strip())
+            else:
+                event = parse_claude_json_line(buffer.strip())
             if event:
                 yield event
-        elif cfg.stream_format != "json" and buffer:
+        elif cfg.stream_format not in ("json", "opencode-json") and buffer:
             events, _ = parse_plain_tool_markers(buffer, final=True)
             for kind, data in events:
                 if kind == "tool_use":
@@ -541,7 +601,7 @@ class Acople:
             except asyncio.TimeoutError:
                 stderr_bytes = b""
             if stderr_bytes:
-                stderr = stderr_bytes.decode("utf-8", errors="replace").strip()
+                stderr = _ANSI_RE.sub("", stderr_bytes.decode("utf-8", errors="replace")).strip()
                 if stderr:
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=2.0)
@@ -552,7 +612,8 @@ class Acople:
                     else:
                         yield BridgeEvent(EventType.SYSTEM, {"message": stderr})
 
-        yield BridgeEvent(EventType.DONE, {})
+        if not done_emitted:
+            yield BridgeEvent(EventType.DONE, {})
 
     def interrupt(self, proc: asyncio.subprocess.Process):
         """Interrupt a specific process. Use ACTIVE_PROCESSES registry for lookup."""

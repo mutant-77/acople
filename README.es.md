@@ -28,6 +28,8 @@ Acople no solo llama a una API de texto; llama a un **Agente** con "manos" (herr
 ### Puente y Normalización
 Dejá de pelear con diferentes flags de CLI y formatos de salida inconsistentes. Acople ofrece una **interfaz unificada** para Claude Code, Gemini y otros. Un solo formato para controlarlos a todos.
 
+También normaliza los mensajes **entrantes**: tus clientes pueden enviar formatos OpenAI, Anthropic o Gemini y Acople los traduce de forma transparente.
+
 ### Tu terminal como una API
 Como no podés ejecutar comandos de terminal desde un navegador web o una app móvil, el servidor de Acople actúa como un **puente seguro**, exponiendo tus agentes locales vía HTTP/SSE.
 
@@ -82,7 +84,7 @@ curl -X POST http://localhost:8000/chat/simple \
 
 Ahora Acople es apto para producción. Podés configurar estas variables de entorno:
 
-- `ACOPLE_API_KEY`: Definí una clave secreta para proteger tus endpoints (ej. `export ACOPLE_API_KEY="mi_secreto"`). Luego pasala en el header `X-API-Key`.
+- `ACOPLE_API_KEY`: Definí una clave secreta para proteger tus endpoints (ej. `export ACOPLE_API_KEY="mi_secreto"`). Pasala en el header `X-API-Key` o como `Authorization: Bearer <clave>`.
 - `ACOPLE_MAX_CONCURRENT`: Límite de sesiones simultáneas para no saturar tu compu (por defecto es `5`).
 - `ACOPLE_CORS_ORIGINS`: Controlá quién puede pegarle a tu API (por defecto `http://localhost:*`).
 - `OPENAI_API_KEY`: Requerida para generación de imágenes con `gpt-image-1`.
@@ -105,8 +107,8 @@ Acople ahora incluye un sistema de persistencia inteligente (**Compactor**) acti
 
 | Endpoint | Qué hace | Cuándo usarlo |
 |----------|---------|--------------|
-| `POST /chat/simple` | Solo pasá el prompt | Para algo rápido y fácil ✅ |
-| `POST /chat` | Con más opciones | Cuando necesitás más control (ej. cwd, timeouts) |
+| `POST /chat/simple` | Solo el prompt (+ `agent` opcional) | Para algo rápido y fácil ✅ |
+| `POST /chat` | Opciones completas: `system`, `cwd`, `agent`, `model`, `tools`, `tool_choice`, `session_id` | Cuando necesitás más control |
 | `POST /image/generate` | Genera imágenes | Generación de imágenes con gpt-image-1 🎨 |
 | `GET /agents` | Lista agentes instalados | Para ver qué tenés disponible |
 | `GET /models` | Lista modelos del agente | Para elegir un modelo específico |
@@ -139,7 +141,7 @@ Acople puede actuar como un **gateway local compatible con OpenAI**. Esto signif
 - **API Key:** `cualquier-string` (o tu `ACOPLE_API_KEY`)
 - **Model:** `acople/claude`, `acople/gemini`, etc.
 
-¡Ahora tus agentes CLI favoritos están disponibles como una API estándar!
+¡Ahora tus agentes CLI favoritos están disponibles como una API estándar! El llamado a tools también está soportado: pasá `tools` y `tool_choice` en tu request y Acople devuelve `tool_calls` correctamente en la respuesta.
 
 ---
 
