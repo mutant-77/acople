@@ -203,3 +203,117 @@ class TestSSEFormat:
         payload = json.loads(sse.replace("data: ", "").strip())
         assert payload["type"] == "tool_use"
         assert payload["tool"] == "bash"
+
+    def test_sse_type_not_overwritten_by_data(self):
+        """Fix 5: data.type no sobreescribe el type del evento."""
+        from acople import BridgeEvent, EventType
+
+        event = BridgeEvent(EventType.TOKEN, {"type": "INJECTED", "text": "hello"})
+        sse = event.to_sse()
+
+        payload = json.loads(sse.replace("data: ", "").strip())
+        assert payload["type"] == "token", f"Expected 'token', got {payload['type']!r}"
+        assert payload["text"] == "hello"
+
+
+class TestExtractJSONObjects:
+    """Tests de _extract_json_objects (Fix 1: JSON multilínea)"""
+
+    def test_single_object(self):
+        from acople.bridge import _extract_json_objects
+
+        objects, remainder = _extract_json_objects('{"a": 1}')
+        assert objects == ['{"a": 1}']
+        assert remainder == ""
+
+    def test_multiple_objects(self):
+        from acople.bridge import _extract_json_objects
+
+        text = '{"a": 1}\n{"b": 2}\n{"c": 3}'
+        objects, remainder = _extract_json_objects(text)
+        assert objects == ['{"a": 1}', '{"b": 2}', '{"c": 3}']
+        assert remainder == ""
+
+    def test_multiline_string(self):
+        """JSON con saltos de línea dentro de string — el caso que rompía el parser anterior."""
+        from acople.bridge import _extract_json_objects
+
+        text = '{"type":"text","part":{"text":"hello\\nworld\\nfoo"}}'
+        objects, remainder = _extract_json_objects(text)
+        assert len(objects) == 1
+        assert json.loads(objects[0])["part"]["text"] == "hello\nworld\nfoo"
+        assert remainder == ""
+
+    def test_multiline_tool_input(self):
+        """Tool call con código multilínea como input."""
+        from acople.bridge import _extract_json_objects
+
+        text = '{"type":"tool_use","name":"write","input":{"content":"def foo():\\n    return 42\\n"}}'
+        objects, remainder = _extract_json_objects(text)
+        assert len(objects) == 1
+        parsed = json.loads(objects[0])
+        assert "\\n" in parsed["input"]["content"] or "\n" in parsed["input"]["content"]
+
+    def test_nested_braces(self):
+        """Objetos JSON anidados."""
+        from acople.bridge import _extract_json_objects
+
+        text = '{"outer":{"inner":{"a":1}}}'
+        objects, remainder = _extract_json_objects(text)
+        assert len(objects) == 1
+        assert json.loads(objects[0])["outer"]["inner"]["a"] == 1
+
+    def test_braces_inside_strings(self):
+        """Llaves dentro de strings no afectan el brace counting."""
+        from acople.bridge import _extract_json_objects
+
+        text = '{"text":"hello {world} and {nested} stuff"}'
+        objects, remainder = _extract_json_objects(text)
+        assert len(objects) == 1
+        assert json.loads(objects[0])["text"] == "hello {world} and {nested} stuff"
+
+    def test_escaped_quotes_inside_strings(self):
+        """Comillas escapadas dentro de strings."""
+        from acople.bridge import _extract_json_objects
+
+        text = '{"text":"he said \\\"hello world\\\""}'
+        objects, remainder = _extract_json_objects(text)
+        assert len(objects) == 1, f"Expected 1 object, got {len(objects)}: {objects}"
+
+    def test_partial_object_at_end(self):
+        """Objeto incompleto al final se devuelve como remainder."""
+        from acople.bridge import _extract_json_objects
+
+        text = '{"a": 1}\n{"b":'
+        objects, remainder = _extract_json_objects(text)
+        assert objects == ['{"a": 1}']
+        assert remainder == '{"b":'
+
+    def test_multiple_partial_accumulation(self):
+        """Acumulación progresiva de chunks multilínea."""
+        from acople.bridge import _extract_json_objects
+
+        chunk1 = '{"type":"text","part":{"text":"hello\\n'
+        chunk2 = 'world\\n'
+        chunk3 = 'foo"}}'
+
+        objects, remainder = _extract_json_objects(chunk1 + chunk2 + chunk3)
+        assert len(objects) == 1
+        assert json.loads(objects[0])["part"]["text"] == "hello\nworld\nfoo"
+        assert remainder == ""
+
+    def test_empty_text(self):
+        """Texto vacío."""
+        from acople.bridge import _extract_json_objects
+
+        objects, remainder = _extract_json_objects("")
+        assert objects == []
+        assert remainder == ""
+
+    def test_whitespace_between_objects(self):
+        """Espacios y saltos de línea entre objetos."""
+        from acople.bridge import _extract_json_objects
+
+        text = '{"a": 1}  \n\n  {"b": 2}'
+        objects, remainder = _extract_json_objects(text)
+        assert objects == ['{"a": 1}', '{"b": 2}']

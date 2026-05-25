@@ -43,7 +43,7 @@ class BridgeEvent:
     data: dict = field(default_factory=dict)
 
     def to_sse(self) -> str:
-        payload = json.dumps({"type": self.type, **self.data})
+        payload = json.dumps({**self.data, "type": self.type.value})
         return f"data: {payload}\n\n"
 
 
@@ -170,6 +170,49 @@ def get_config(agent_name: str) -> AgentConfig:
 
 
 # ---------------------------------------------------------------------------
+# Extractor de objetos JSON multilínea por profundidad de llaves
+# ---------------------------------------------------------------------------
+
+def _extract_json_objects(text: str) -> tuple[list[str], str]:
+    """Extrae objetos JSON completos del texto, manejando saltos de línea
+    dentro de strings. Retorna (objetos_como_strings, resto).
+
+    Esto reemplaza el split ingenuo por ``\\n`` que rompe JSON multilínea
+    (ej: tool input con texto con saltos de línea).
+    """
+    objects: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+
+    for i, ch in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start >= 0:
+                objects.append(text[start:i+1])
+                start = -1
+
+    remainder = text[start:] if start >= 0 else ""
+    return objects, remainder
+
+
+# ---------------------------------------------------------------------------
 # Parsers de stream JSON
 # ---------------------------------------------------------------------------
 
@@ -185,6 +228,7 @@ def parse_opencode_json_line(line: str) -> BridgeEvent | None:
     try:
         event = json.loads(line)
     except json.JSONDecodeError:
+        logger.debug("parse_opencode_json_line: invalid JSON (%d bytes)", len(line))
         return None
 
     t = event.get("type", "")
@@ -206,6 +250,8 @@ def parse_opencode_json_line(line: str) -> BridgeEvent | None:
         if part.get("reason") == "stop":
             return BridgeEvent(EventType.DONE, {})
 
+    if t:
+        logger.debug("parse_opencode_json_line: unhandled event type %r", t)
     return None
 
 
@@ -213,6 +259,7 @@ def parse_claude_json_line(line: str) -> BridgeEvent | None:
     try:
         event = json.loads(line)
     except json.JSONDecodeError:
+        logger.debug("parse_claude_json_line: invalid JSON (%d bytes)", len(line))
         return None
 
     t = event.get("type", "")
@@ -236,6 +283,8 @@ def parse_claude_json_line(line: str) -> BridgeEvent | None:
     elif t in ("message_stop", "end"):
         return BridgeEvent(EventType.DONE, {})
 
+    if t:
+        logger.debug("parse_claude_json_line: unhandled event type %r", t)
     return None
 
 
@@ -554,18 +603,18 @@ class Acople:
                     buffer = ""
                     continue
 
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if line:
-                        if cfg.stream_format == "opencode-json":
-                            event = parse_opencode_json_line(line)
-                        else:
-                            event = parse_claude_json_line(line)
-                        if event:
-                            if event.type == EventType.DONE:
-                                done_emitted = True
-                            yield event
+                objects, buffer = _extract_json_objects(buffer)
+                for obj_str in objects:
+                    if cfg.stream_format == "opencode-json":
+                        event = parse_opencode_json_line(obj_str)
+                    else:
+                        event = parse_claude_json_line(obj_str)
+                    if event:
+                        if event.type == EventType.DONE:
+                            done_emitted = True
+                        yield event
+                    else:
+                        logger.debug("Dropped unrecognized JSON object (%d bytes)", len(obj_str))
             else:
                 # Plain-text: buffereamos para detectar markers <acople-tool>.
                 buffer += _ANSI_RE.sub("", chunk)
@@ -581,12 +630,10 @@ class Acople:
                         yield BridgeEvent(EventType.TOKEN, data)
 
         if cfg.stream_format in ("json", "opencode-json") and buffer.strip():
-            if cfg.stream_format == "opencode-json":
-                event = parse_opencode_json_line(buffer.strip())
-            else:
-                event = parse_claude_json_line(buffer.strip())
-            if event:
-                yield event
+            logger.warning(
+                "Dropping incomplete JSON tail (%d bytes) for PID %s: %r",
+                len(buffer), getattr(proc, 'pid', '?'), buffer[:200],
+            )
         elif cfg.stream_format not in ("json", "opencode-json") and buffer:
             events, _ = parse_plain_tool_markers(buffer, final=True)
             for kind, data in events:

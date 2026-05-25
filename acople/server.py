@@ -528,7 +528,18 @@ async def openai_compatibility(request: Request):
     
     # Fallback al agente por defecto si no hay coincidencia clara o el binario no existe
     if not agent_name or not shutil.which(agent_name):
+        orig_agent = agent_name
         agent_name = _DEFAULT_AGENT or "claude"
+        if orig_agent is None:
+            logger.warning(
+                "Model %r did not match any known agent; falling back to %r",
+                full_model, agent_name,
+            )
+        elif orig_agent != agent_name:
+            logger.warning(
+                "Agent %r not in PATH; falling back to %r",
+                orig_agent, agent_name,
+            )
         
     max_history = _get_max_history(request)
 
@@ -580,7 +591,10 @@ async def openai_compatibility(request: Request):
                         yield f"data: {json.dumps(chunk)}\n\n"
                         yield "data: [DONE]\n\n"
                     elif event.type == EventType.ERROR:
+                        logger.error("SSE adapter received error event: %s", event.data.get("message", ""))
                         yield f"data: {json.dumps({'error': event.data})}\n\n"
+                    else:
+                        logger.debug("SSE adapter ignoring unhandled event: %s", event.type)
             except Exception as e:
                 logger.error(f"SSE Adapter error: {e}")
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -594,6 +608,7 @@ async def openai_compatibility(request: Request):
     else:
         full_response = ""
         collected_tool_calls: list[dict] = []
+        error_message: str | None = None
         async for event in workflow:
             if event.type == EventType.TOKEN:
                 full_response += event.data.get("text", "")
@@ -601,6 +616,17 @@ async def openai_compatibility(request: Request):
                 tc = _tool_use_to_openai(event.data, len(collected_tool_calls))
                 tc.pop("index", None)
                 collected_tool_calls.append(tc)
+            elif event.type == EventType.ERROR:
+                error_message = event.data.get("message", "Unknown error")
+                logger.error("OpenAI non-streaming error: %s", error_message)
+                break
+            elif event.type == EventType.DONE:
+                pass  # natural end
+            else:
+                logger.debug("OpenAI non-streaming ignoring event: %s", event.type)
+
+        if error_message:
+            raise HTTPException(status_code=502, detail=error_message)
 
         message: dict = {"role": "assistant", "content": full_response or None}
         if collected_tool_calls:

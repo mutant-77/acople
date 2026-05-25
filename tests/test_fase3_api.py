@@ -166,3 +166,126 @@ class TestFase3Endpoints:
 
         # Puede ser 200 (si hay agente) o 503 (si no)
         assert response.status_code in [200, 503]
+
+
+class TestFixesJSONyOpenAI:
+    """Tests para Fix 2, 4, 6 — OpenAI endpoint error handling y model fallback"""
+
+    def test_openai_non_streaming_error_event(self):
+        """Fix 2: Non-streaming /v1/chat/completions eleva HTTP 502 si el workflow emite ERROR."""
+        from unittest.mock import patch
+
+        from fastapi.testclient import TestClient
+
+        from acople import EventType
+        from acople.server import app
+
+        ERROR_EVENT_DATA = {"message": "Agent crashed"}
+
+        async def mock_workflow(*args, **kwargs):
+            from acople import BridgeEvent
+            yield BridgeEvent(EventType.TOKEN, {"text": "partial "})
+            yield BridgeEvent(EventType.ERROR, ERROR_EVENT_DATA)
+
+        with (
+            patch("acople.server._unified_chat_workflow", return_value=mock_workflow()),
+            patch("acople.server._DEFAULT_AGENT", "claude"),
+            patch("shutil.which", return_value="/usr/bin/claude"),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={"messages": [{"role": "user", "content": "hi"}], "model": "claude-4", "stream": False},
+            )
+
+        assert response.status_code == 502
+        body = response.json()
+        assert "Agent crashed" in body.get("detail", "")
+
+    def test_openai_streaming_error_event(self):
+        """Fix 2+4: Streaming /v1/chat/completions emite error SSE y luego [DONE]."""
+        from unittest.mock import AsyncMock, patch
+
+        from fastapi.testclient import TestClient
+
+        from acople.server import app, EventType
+
+        async def mock_workflow(*args, **kwargs):
+            from acople import BridgeEvent
+            yield BridgeEvent(EventType.TOKEN, {"text": "hello "})
+            yield BridgeEvent(EventType.ERROR, {"message": "stream error"})
+            yield BridgeEvent(EventType.DONE, {})
+
+        with (
+            patch("acople.server._unified_chat_workflow", return_value=mock_workflow()),
+            patch("acople.server._DEFAULT_AGENT", "claude"),
+            patch("shutil.which", return_value="/usr/bin/claude"),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={"messages": [{"role": "user", "content": "hi"}], "model": "claude-4", "stream": True},
+            )
+
+        assert response.status_code == 200
+        body = response.text
+        assert "error" in body
+        assert "stream error" in body
+        assert "[DONE]" in body
+
+    def test_openai_non_streaming_unknown_event_logged(self):
+        """Fix 4: Eventos no manejados en non-streaming no rompen el flujo."""
+        from unittest.mock import AsyncMock, patch
+
+        from fastapi.testclient import TestClient
+
+        from acople.server import app, EventType
+
+        async def mock_workflow(*args, **kwargs):
+            from acople import BridgeEvent
+            yield BridgeEvent(EventType.TOKEN, {"text": "hello "})
+            yield BridgeEvent(EventType.TOOL_RESULT, {"content": "result"})
+            yield BridgeEvent(EventType.SYSTEM, {"message": "info"})
+            yield BridgeEvent(EventType.DONE, {})
+
+        with (
+            patch("acople.server._unified_chat_workflow", return_value=mock_workflow()),
+            patch("acople.server._DEFAULT_AGENT", "claude"),
+            patch("shutil.which", return_value="/usr/bin/claude"),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={"messages": [{"role": "user", "content": "hi"}], "model": "claude-4", "stream": False},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["choices"][0]["message"]["content"] == "hello "
+
+    def test_model_fallback_logs_warning(self):
+        """Fix 6: Modelo no reconocido genera warning y cae al default."""
+        from unittest.mock import AsyncMock, patch
+
+        from fastapi.testclient import TestClient
+
+        from acople.server import app, EventType
+
+        async def mock_workflow(*args, **kwargs):
+            from acople import BridgeEvent
+            yield BridgeEvent(EventType.DONE, {})
+
+        with (
+            patch("acople.server._unified_chat_workflow", return_value=mock_workflow()),
+            patch("acople.server._DEFAULT_AGENT", "claude"),
+            patch("shutil.which", return_value="/usr/bin/claude"),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={"messages": [{"role": "user", "content": "hi"}], "model": "gpt-4-turbo", "stream": False},
+            )
+
+        # Debe responder con 200 aunque haya hecho fallback
+        assert response.status_code == 200
+        assert response.json()["model"] == "gpt-4-turbo"
