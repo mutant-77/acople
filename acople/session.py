@@ -173,11 +173,14 @@ def resolve_session_id(
         logger.debug("resolve_session_id: from header -> %s", validated)
         return validated
 
-    # Prioridad 2: Hash estable del CWD real del proyecto
-    # Si no se provee, usamos el CWD del servidor como fallback
-    stable_key = cwd or os.getcwd()
+    # Prioridad 2: Hash estable del CWD real del proyecto + agente.
+    # Si no se provee CWD, usamos el del servidor como fallback. Incluimos el
+    # agente para que dos agentes distintos en la misma carpeta no compartan
+    # sesión (sus historiales no son intercambiables).
+    base_key = cwd or os.getcwd()
+    stable_key = f"{base_key}|{agent or ''}"
     sid = hashlib.md5(stable_key.encode()).hexdigest()[:12]
-    logger.debug("resolve_session_id: from CWD stable key (%s) -> %s", stable_key, sid)
+    logger.debug("resolve_session_id: from stable key (%s) -> %s", stable_key, sid)
     return sid
 
 
@@ -529,13 +532,14 @@ class SessionManager:
             ).fetchone()
             system_text = system_row["content"] if system_row else ""
 
-            # Ventana deslizante: tomamos una cantidad generosa de mensajes
-            # El límite real lo impondrá max_chars durante la compilación.
+            # Ventana deslizante: replayamos a lo sumo max_history mensajes
+            # recientes (+1 de margen). El contexto antiguo relevante se
+            # recupera aparte vía FTS; max_chars impone el techo de tamaño.
             window_rows = conn.execute(
                 """SELECT role, content, position FROM messages
                    WHERE session_id = ? AND role != 'system'
                    ORDER BY position DESC LIMIT ?""",
-                (session_id, max(max_history + 1, 100)),
+                (session_id, max_history + 1),
             ).fetchall()
             window_rows.reverse()
 
@@ -659,7 +663,7 @@ class SessionManager:
                         part = f"[{role_label}: {content}]"
                     
                     if current_chars + len(part) + 2 > allowed_body_chars:
-                        body_parts.insert(0, "[... history truncated ...]")
+                        body_parts.insert(0, "[...] history truncated")
                         break
                     body_parts.insert(0, part)
                     current_chars += len(part) + 2

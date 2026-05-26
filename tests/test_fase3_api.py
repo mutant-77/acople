@@ -44,16 +44,20 @@ class TestFase3APISimplificada:
         assert req.model is None
 
     def test_simple_chat_request(self):
-        """3.3 SimpleChatRequest solo tiene prompt"""
+        """3.3 SimpleChatRequest es minimal: prompt + agent opcional."""
         from acople.server import SimpleChatRequest
 
         req = SimpleChatRequest(prompt="tu prompt aqui")
         assert req.prompt == "tu prompt aqui"
 
-        # No debe tener otros campos
+        # agent es opcional (lo usa /chat/simple para elegir agente)
+        assert req.agent is None
+        req2 = SimpleChatRequest(prompt="x", agent="claude")
+        assert req2.agent == "claude"
+
+        # pero NO expone los campos avanzados de ChatRequest
         assert not hasattr(req, 'system')
         assert not hasattr(req, 'cwd')
-        assert not hasattr(req, 'agent')
 
     def test_chat_request_all_optional_except_prompt(self):
         """3.1 Todos los campos excepto prompt son opcionales"""

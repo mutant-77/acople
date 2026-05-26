@@ -183,6 +183,36 @@ def _extract_json_payload(text: str) -> str:
     return best if best is not None else text.strip()
 
 
+def _build_agent_prompt(
+    *,
+    messages: list[dict],
+    compiled_prompt: str,
+    sys_prompt_text: str,
+    tool_catalog: str,
+    stream_format: str,
+) -> str:
+    """Construye el prompt final que recibe el agente subyacente.
+
+    - stream_format == "json" (claude): usamos ``compiled_prompt`` completo; el
+      compactor ya le embebe system + historial y el CLI lo maneja bien.
+    - resto (opencode, gemini, codex, kilo, qwen): el ``compiled_prompt`` trae
+      prefijos "User:"/"Assistant:" y todo el historial, lo que confunde al
+      modelo (responde al contexto histórico en vez de a la tarea actual). Le
+      enviamos solo el último turno del usuario PERO conservando el system: ahí
+      viven las instrucciones de la tarea y el esquema JSON. Descartarlo (como
+      hacía la versión anterior) dejaba al modelo sin saber qué producir.
+    """
+    if stream_format == "json":
+        return compiled_prompt
+
+    raw_last = next(
+        (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
+        compiled_prompt,
+    )
+    head = f"{sys_prompt_text}\n\n" if sys_prompt_text else ""
+    return f"{head}{tool_catalog}{raw_last}"
+
+
 _DEFAULT_AGENT: str | None = None
 _session_manager = None
 ACTIVE_PROCESSES: dict[str, asyncio.subprocess.Process] = {}
@@ -443,10 +473,16 @@ async def _unified_chat_workflow(
     model: str | None = None,
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
+    stateful: bool = True,
 ) -> AsyncIterator[BridgeEvent]:
     """
     Workflow unificado (Pipeline Senior) para el manejo de chats.
     Centraliza: Normalización, Identidad, Memoria, Ejecución y Persistencia.
+
+    stateful: si False (clientes OpenAI-compat) NO se usa memoria por carpeta;
+    cada request es autónomo salvo que traiga un ``session_id`` explícito. Si
+    True (clientes nativos /chat, p.ej. la UI) se mantiene la persistencia
+    automática por carpeta.
     """
     # 0. Normalización agnóstica: OpenAI/Anthropic/Ollama → formato interno.
     messages = normalize_incoming_messages(messages)
@@ -454,26 +490,42 @@ async def _unified_chat_workflow(
     # 1. Normalización de Identidad y CWD
     sys_prompt_text, extracted_cwd = process_system_messages(messages)
     effective_cwd = cwd or extracted_cwd
-    
-    # 2. Resolución de Sesión (si el manager está activo)
+
+    # 1.b Colapsar múltiples system messages en uno solo. La sesión (Compactor)
+    # y el compilado asumen un único system por sesión: si llegan varios (p.ej.
+    # la directiva JSON que añade el endpoint OpenAI + el system del cliente),
+    # sync_new_messages borra-y-reinserta por cada uno y solo sobrevive el
+    # último, perdiendo instrucciones. Fusionamos antes de persistir/compilar.
+    non_system = [m for m in messages if m.get("role") != "system"]
+    if sys_prompt_text:
+        messages = [{"role": "system", "content": sys_prompt_text}, *non_system]
+    else:
+        messages = non_system
+
+    # 2. Resolución de Sesión / Memoria.
+    # Solo persistimos+replayamos historial cuando hay identidad estable: un
+    # session_id explícito (p.ej. header X-Session-ID) o un cliente nativo
+    # (stateful=True). Sin eso, modo stateless: el prompt se arma solo desde
+    # los mensajes entrantes y peticiones independientes no se contaminan.
     final_session_id = session_id
     compiled_prompt = ""
-    
-    if _session_manager:
+    use_memory = bool(_session_manager) and (final_session_id is not None or stateful)
+
+    if use_memory:
         if not final_session_id:
             # Fallback a CWD-based ID para persistencia automática por carpeta
             from acople import resolve_session_id
             final_session_id = resolve_session_id({}, messages, agent=agent_name, cwd=effective_cwd)
-        
+
         _session_manager.get_or_create(final_session_id)
-        
+
         # Actualizar metadatos del proyecto
         metadata = {"agent": agent_name, "model": model or agent_name}
         if effective_cwd:
             metadata["cwd"] = effective_cwd
             metadata["project_hash"] = hashlib.md5(effective_cwd.encode()).hexdigest()[:12]
         _session_manager.update_metadata(final_session_id, **metadata)
-        
+
         # Sincronizar e Historial (Compactor)
         compiled_prompt = _session_manager.compile(
             session_id=final_session_id,
@@ -481,12 +533,16 @@ async def _unified_chat_workflow(
             agent=agent_name,
             max_history=max_history
         )
-        
+
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"UNIFIED PROMPT (len={len(compiled_prompt)}): {compiled_prompt[:200]}...")
     else:
-        # Modo Legacy (sin sesiones activas) — messages ya está normalizado
+        # Modo stateless — sin persistencia ni replay. El prompt se arma desde
+        # los mensajes entrantes (que el cliente OpenAI ya envía completos),
+        # incluyendo el system (instrucciones + esquema) para agentes "json".
         history_parts = []
+        if sys_prompt_text:
+            history_parts.append(sys_prompt_text)
         for m in messages:
             role = m.get("role")
             content = m.get("content", "")
@@ -515,19 +571,13 @@ async def _unified_chat_workflow(
     active = Acople(agent_name)
     process_pid = final_session_id
 
-    # Para agentes plain-text (opencode, gemini, codex…) el compiled_prompt
-    # incluye prefijos "User:"/"Assistant:" y todo el historial, lo que confunde
-    # al modelo subyacente (responde al contexto histórico en vez de a la tarea
-    # actual). Estos agentes tienen su propio manejo de contexto; les enviamos
-    # solo el último mensaje del usuario como prompt limpio.
-    if active.config.stream_format != "json":
-        raw_last = next(
-            (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
-            compiled_prompt,
-        )
-        agent_prompt = f"{tool_catalog}{raw_last}" if tool_catalog else raw_last
-    else:
-        agent_prompt = compiled_prompt
+    agent_prompt = _build_agent_prompt(
+        messages=messages,
+        compiled_prompt=compiled_prompt,
+        sys_prompt_text=sys_prompt_text,
+        tool_catalog=tool_catalog,
+        stream_format=active.config.stream_format,
+    )
 
     def register_proc(p):
         ACTIVE_PROCESSES[process_pid] = p
@@ -551,8 +601,10 @@ async def _unified_chat_workflow(
         yield BridgeEvent(EventType.ERROR, {"message": str(e)})
     finally:
         ACTIVE_PROCESSES.pop(process_pid, None)
-        # 4. Persistencia final: texto del assistant y cada tool_use
-        if _session_manager and final_session_id:
+        # 4. Persistencia final: texto del assistant y cada tool_use.
+        # Solo si usamos memoria (en stateless final_session_id es efímero y la
+        # sesión nunca se creó).
+        if use_memory and _session_manager and final_session_id:
             if response_content:
                 _session_manager.add_message(final_session_id, "assistant", response_content)
             for tu in captured_tool_uses:
@@ -595,21 +647,27 @@ async def openai_compatibility(request: Request):
     json_mode = rf_type in ("json_object", "json_schema")
     if json_mode:
         # Reforzar la instrucción al agente además del saneado posterior.
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "Devuelve la respuesta como un único objeto JSON válido "
-                    "DIRECTAMENTE en tu mensaje de texto. Reglas estrictas: "
-                    "(1) NO uses herramientas, NO crees ni escribas archivos, "
-                    "NO ejecutes comandos; el JSON va en el texto de la respuesta. "
-                    "(2) NO incluyas explicaciones, comentarios ni fences de "
-                    "código (```). (3) Tu respuesta completa debe poder parsearse "
-                    "directamente con un parser JSON."
-                ),
-            },
-            *messages,
-        ]
+        # Los CLIs agénticos (gemini, codex, kilo) tienden a ignorar un system
+        # prompt al inicio y a responder con prosa/markdown, así que además de
+        # la directiva de sistema añadimos un recordatorio al final del último
+        # turno de usuario (los modelos atienden más a la última instrucción).
+        _json_directive = (
+            "CRITICAL OUTPUT FORMAT. Your ENTIRE response must be a single valid "
+            "JSON object and NOTHING else. Start directly with '{' and end with "
+            "'}'. FORBIDDEN: introductory text (e.g. 'Here is'), bulleted or "
+            "numbered lists, markdown, bold, code fences (```), explanations, "
+            "clarifying questions, and using tools or creating files. The response "
+            "must be parseable as-is by a JSON parser (JSON.parse)."
+        )
+        _json_reminder = (
+            "\n\n(Reminder: reply ONLY with the JSON object — no prose, no "
+            "markdown, no code fences. Start with '{'.)"
+        )
+        messages = [{"role": "system", "content": _json_directive}, *messages]
+        for _i in range(len(messages) - 1, -1, -1):
+            if messages[_i].get("role") == "user" and isinstance(messages[_i].get("content"), str):
+                messages[_i] = {**messages[_i], "content": messages[_i]["content"] + _json_reminder}
+                break
 
     # Normalización Senior: Mapear nombre de modelo a binario de agente conocido.
     # Se usa AGENT_CONFIGS como única fuente de verdad para no quedar desfasado
@@ -641,13 +699,27 @@ async def openai_compatibility(request: Request):
         
     max_history = _get_max_history(request)
 
+    # Endpoint OpenAI-compat: stateless por defecto (como la API real de OpenAI;
+    # el cliente envía el historial completo). La memoria server-side es opt-in
+    # vía header X-Session-ID. Un header con formato inválido se ignora.
+    client_session_id = request.headers.get("X-Session-ID")
+    if client_session_id:
+        from acople import validate_session_id
+        try:
+            validate_session_id(client_session_id)
+        except ValueError:
+            logger.warning("X-Session-ID inválido ignorado: %r", client_session_id)
+            client_session_id = None
+
     workflow = _unified_chat_workflow(
         messages=messages,
         agent_name=agent_name,
+        session_id=client_session_id,
         max_history=max_history,
         model=full_model,
         tools=tools,
         tool_choice=tool_choice,
+        stateful=False,
     )
 
     if stream:

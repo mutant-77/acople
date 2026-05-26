@@ -7,31 +7,100 @@ import json
 
 
 class TestClaudeJSONParser:
-    """Tests de parse_claude_json_line"""
+    """Tests de parse_claude_json_line (devuelve list[BridgeEvent])"""
+
+    # --- Formato real del CLI de Claude Code -------------------------------
+
+    def test_parse_assistant_message_text(self):
+        """assistant con bloque de texto → TOKEN con ese texto."""
+        from acople import EventType
+        from acople.bridge import parse_claude_json_line
+
+        line = json.dumps({
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Hola"}]},
+        })
+        events = parse_claude_json_line(line)
+
+        assert len(events) == 1
+        assert events[0].type == EventType.TOKEN
+        assert events[0].data["text"] == "Hola"
+
+    def test_parse_assistant_message_multiple_blocks(self):
+        """assistant con texto + tool_use → TOKEN y TOOL_USE en orden."""
+        from acople import EventType
+        from acople.bridge import parse_claude_json_line
+
+        line = json.dumps({
+            "type": "assistant",
+            "message": {"content": [
+                {"type": "text", "text": "voy a escribir"},
+                {"type": "tool_use", "name": "Write", "input": {"path": "a.py"}},
+            ]},
+        })
+        events = parse_claude_json_line(line)
+
+        assert [e.type for e in events] == [EventType.TOKEN, EventType.TOOL_USE]
+        assert events[0].data["text"] == "voy a escribir"
+        assert events[1].data["tool"] == "Write"
+        assert events[1].data["input"]["path"] == "a.py"
+
+    def test_parse_user_tool_result(self):
+        """user con bloque tool_result → TOOL_RESULT."""
+        from acople import EventType
+        from acople.bridge import parse_claude_json_line
+
+        line = json.dumps({
+            "type": "user",
+            "message": {"content": [{"type": "tool_result", "content": "ok"}]},
+        })
+        events = parse_claude_json_line(line)
+
+        assert len(events) == 1
+        assert events[0].type == EventType.TOOL_RESULT
+        assert events[0].data["content"] == "ok"
+
+    def test_parse_result_is_done(self):
+        """result (fin de turno del CLI) → DONE."""
+        from acople import EventType
+        from acople.bridge import parse_claude_json_line
+
+        line = json.dumps({"type": "result", "subtype": "success", "result": "Hola"})
+        events = parse_claude_json_line(line)
+
+        assert len(events) == 1
+        assert events[0].type == EventType.DONE
+
+    def test_parse_system_init_ignored(self):
+        """system/init y otros tipos meta no producen eventos."""
+        from acople.bridge import parse_claude_json_line
+
+        assert parse_claude_json_line(json.dumps({"type": "system", "subtype": "init"})) == []
+        assert parse_claude_json_line(json.dumps({"type": "rate_limit_event"})) == []
+
+    # --- Compatibilidad con eventos crudos de la API SSE -------------------
 
     def test_parse_content_block_delta(self):
-        """content_block_delta → TOKEN event."""
+        """content_block_delta → [TOKEN]."""
         from acople import EventType
         from acople.bridge import parse_claude_json_line
 
         line = json.dumps({"type": "content_block_delta", "delta": {"text": "hello"}})
-        event = parse_claude_json_line(line)
+        events = parse_claude_json_line(line)
 
-        assert event is not None
-        assert event.type == EventType.TOKEN
-        assert event.data["text"] == "hello"
+        assert len(events) == 1
+        assert events[0].type == EventType.TOKEN
+        assert events[0].data["text"] == "hello"
 
     def test_parse_content_block_delta_empty_text(self):
-        """content_block_delta sin texto → None."""
+        """content_block_delta sin texto → []."""
         from acople.bridge import parse_claude_json_line
 
         line = json.dumps({"type": "content_block_delta", "delta": {"text": ""}})
-        event = parse_claude_json_line(line)
-
-        assert event is None
+        assert parse_claude_json_line(line) == []
 
     def test_parse_tool_use(self):
-        """tool_use → TOOL_USE event."""
+        """tool_use → [TOOL_USE]."""
         from acople import EventType
         from acople.bridge import parse_claude_json_line
 
@@ -40,82 +109,71 @@ class TestClaudeJSONParser:
             "name": "write_file",
             "input": {"path": "test.py", "content": "print('hi')"},
         })
-        event = parse_claude_json_line(line)
+        events = parse_claude_json_line(line)
 
-        assert event is not None
-        assert event.type == EventType.TOOL_USE
-        assert event.data["tool"] == "write_file"
-        assert "path" in event.data["input"]
+        assert len(events) == 1
+        assert events[0].type == EventType.TOOL_USE
+        assert events[0].data["tool"] == "write_file"
+        assert "path" in events[0].data["input"]
 
     def test_parse_tool_call(self):
-        """tool_call (alias) → TOOL_USE event."""
+        """tool_call (alias) → [TOOL_USE]."""
         from acople import EventType
         from acople.bridge import parse_claude_json_line
 
         line = json.dumps({"type": "tool_call", "name": "read_file", "input": {}})
-        event = parse_claude_json_line(line)
+        events = parse_claude_json_line(line)
 
-        assert event is not None
-        assert event.type == EventType.TOOL_USE
+        assert len(events) == 1
+        assert events[0].type == EventType.TOOL_USE
 
     def test_parse_tool_result(self):
-        """tool_result → TOOL_RESULT event."""
+        """tool_result (crudo) → [TOOL_RESULT]."""
         from acople import EventType
         from acople.bridge import parse_claude_json_line
 
         line = json.dumps({"type": "tool_result", "content": "file written"})
-        event = parse_claude_json_line(line)
+        events = parse_claude_json_line(line)
 
-        assert event is not None
-        assert event.type == EventType.TOOL_RESULT
-        assert event.data["content"] == "file written"
+        assert len(events) == 1
+        assert events[0].type == EventType.TOOL_RESULT
+        assert events[0].data["content"] == "file written"
 
     def test_parse_message_stop(self):
-        """message_stop → DONE event."""
+        """message_stop → [DONE]."""
         from acople import EventType
         from acople.bridge import parse_claude_json_line
 
-        line = json.dumps({"type": "message_stop"})
-        event = parse_claude_json_line(line)
-
-        assert event is not None
-        assert event.type == EventType.DONE
+        events = parse_claude_json_line(json.dumps({"type": "message_stop"}))
+        assert len(events) == 1
+        assert events[0].type == EventType.DONE
 
     def test_parse_end_event(self):
-        """end → DONE event."""
+        """end → [DONE]."""
         from acople import EventType
         from acople.bridge import parse_claude_json_line
 
-        line = json.dumps({"type": "end"})
-        event = parse_claude_json_line(line)
+        events = parse_claude_json_line(json.dumps({"type": "end"}))
+        assert len(events) == 1
+        assert events[0].type == EventType.DONE
 
-        assert event is not None
-        assert event.type == EventType.DONE
-
-    def test_parse_invalid_json_returns_none(self):
-        """JSON inválido → None."""
+    def test_parse_invalid_json_returns_empty(self):
+        """JSON inválido → []."""
         from acople.bridge import parse_claude_json_line
 
-        event = parse_claude_json_line("this is not json {{{")
-        assert event is None
+        assert parse_claude_json_line("this is not json {{{") == []
 
-    def test_parse_unknown_type_returns_none(self):
-        """Tipo desconocido → None."""
+    def test_parse_unknown_type_returns_empty(self):
+        """Tipo desconocido → []."""
         from acople.bridge import parse_claude_json_line
 
-        line = json.dumps({"type": "some_unknown_type", "data": "test"})
-        event = parse_claude_json_line(line)
+        assert parse_claude_json_line(json.dumps({"type": "some_unknown_type", "data": "x"})) == []
 
-        assert event is None
-
-    def test_parse_missing_type_returns_none(self):
-        """Sin campo type → None."""
+    def test_parse_missing_type_returns_empty(self):
+        """Sin campo type → []."""
         from acople.bridge import parse_claude_json_line
 
-        line = json.dumps({"data": "no type field"})
-        event = parse_claude_json_line(line)
-
-        assert event is None
+        assert parse_claude_json_line(json.dumps({"data": "no type field"})) == []
 
 
 class TestSSEFormat:
@@ -214,6 +272,105 @@ class TestSSEFormat:
         payload = json.loads(sse.replace("data: ", "").strip())
         assert payload["type"] == "token", f"Expected 'token', got {payload['type']!r}"
         assert payload["text"] == "hello"
+
+
+class TestBuildAgentPrompt:
+    """Tests de _build_agent_prompt — qué prompt recibe realmente el agente.
+
+    Regresión: para agentes con stream_format != "json" (opencode, gemini,
+    codex, kilo, qwen) el system prompt se descartaba, dejando al modelo sin
+    instrucciones ni esquema → no podía producir el JSON pedido.
+    """
+
+    SYS = "Sos un asistente. Devolvé un mapa semántico JSON {entities:[...]}."
+    MSGS = [
+        {"role": "system", "content": SYS},
+        {"role": "user", "content": "Tema: gatos"},
+    ]
+    COMPILED = f"{SYS}\n\nUser: Tema: gatos"
+
+    def test_json_agent_uses_compiled_prompt(self):
+        """claude (stream_format='json') recibe el compiled_prompt tal cual."""
+        from acople.server import _build_agent_prompt
+
+        out = _build_agent_prompt(
+            messages=self.MSGS,
+            compiled_prompt=self.COMPILED,
+            sys_prompt_text=self.SYS,
+            tool_catalog="",
+            stream_format="json",
+        )
+        assert out == self.COMPILED
+
+    def test_non_json_agent_keeps_system(self):
+        """opencode (stream_format='opencode-json') DEBE recibir el system."""
+        from acople.server import _build_agent_prompt
+
+        out = _build_agent_prompt(
+            messages=self.MSGS,
+            compiled_prompt=self.COMPILED,
+            sys_prompt_text=self.SYS,
+            tool_catalog="",
+            stream_format="opencode-json",
+        )
+        # El esquema/instrucciones (system) sobreviven...
+        assert self.SYS in out
+        # ...junto al último turno del usuario.
+        assert "Tema: gatos" in out
+        # ...y SIN los prefijos de historial "User:"/"Assistant:".
+        assert "User:" not in out
+        assert "Assistant:" not in out
+
+    def test_non_json_agent_without_system(self):
+        """Sin system, solo el último user (sin head extra)."""
+        from acople.server import _build_agent_prompt
+
+        msgs = [{"role": "user", "content": "Tema: gatos"}]
+        out = _build_agent_prompt(
+            messages=msgs,
+            compiled_prompt="User: Tema: gatos",
+            sys_prompt_text="",
+            tool_catalog="",
+            stream_format="plain",
+        )
+        assert out == "Tema: gatos"
+
+    def test_non_json_agent_includes_tool_catalog(self):
+        """El catálogo de tools se conserva delante del último user."""
+        from acople.server import _build_agent_prompt
+
+        out = _build_agent_prompt(
+            messages=self.MSGS,
+            compiled_prompt=self.COMPILED,
+            sys_prompt_text=self.SYS,
+            tool_catalog="AVAILABLE TOOLS:\n- search\n\n",
+            stream_format="plain",
+        )
+        assert "AVAILABLE TOOLS" in out
+        assert self.SYS in out
+        assert "Tema: gatos" in out
+        # Orden: system, luego catálogo, luego user.
+        assert out.index(self.SYS) < out.index("AVAILABLE TOOLS") < out.index("Tema: gatos")
+
+    def test_non_json_agent_picks_last_user(self):
+        """Con varios turnos, toma el ÚLTIMO mensaje de usuario."""
+        from acople.server import _build_agent_prompt
+
+        msgs = [
+            {"role": "system", "content": self.SYS},
+            {"role": "user", "content": "primero"},
+            {"role": "assistant", "content": "respuesta"},
+            {"role": "user", "content": "ultimo"},
+        ]
+        out = _build_agent_prompt(
+            messages=msgs,
+            compiled_prompt="ignored",
+            sys_prompt_text=self.SYS,
+            tool_catalog="",
+            stream_format="plain",
+        )
+        assert "ultimo" in out
+        assert "primero" not in out
 
 
 class TestExtractJSONObjects:

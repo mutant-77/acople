@@ -64,7 +64,7 @@ class AgentConfig:
 AGENT_CONFIGS: dict[str, AgentConfig] = {
     "claude": AgentConfig(
         bin="claude",
-        args=["--output-format", "stream-json", "--verbose"],
+        args=["--output-format", "stream-json", "--verbose", "--no-session-persistence"],
         prompt_flag="--print",
         stream_format="json",
         max_chars=20_000,
@@ -255,37 +255,72 @@ def parse_opencode_json_line(line: str) -> BridgeEvent | None:
     return None
 
 
-def parse_claude_json_line(line: str) -> BridgeEvent | None:
+def parse_claude_json_line(line: str) -> list[BridgeEvent]:
+    """Parser para ``claude --output-format stream-json --verbose``.
+
+    El CLI de Claude Code NO emite los eventos crudos de la API SSE
+    (``content_block_delta``/``message_stop``); emite mensajes envueltos:
+      {"type":"assistant","message":{"content":[{"type":"text","text":...}]}}
+      {"type":"user","message":{"content":[{"type":"tool_result",...}]}}
+      {"type":"result","subtype":"success","result":"..."}
+    Un mismo mensaje ``assistant`` puede traer varios bloques (texto +
+    tool_use), por eso se devuelve una lista de eventos.
+    """
     try:
         event = json.loads(line)
     except json.JSONDecodeError:
         logger.debug("parse_claude_json_line: invalid JSON (%d bytes)", len(line))
-        return None
+        return []
 
     t = event.get("type", "")
+    events: list[BridgeEvent] = []
 
+    # --- Formato real del CLI de Claude Code -------------------------------
+    if t == "assistant":
+        for block in event.get("message", {}).get("content", []):
+            if not isinstance(block, dict):
+                continue
+            bt = block.get("type")
+            if bt == "text" and block.get("text"):
+                events.append(BridgeEvent(EventType.TOKEN, {"text": block["text"]}))
+            elif bt == "tool_use":
+                events.append(BridgeEvent(EventType.TOOL_USE, {
+                    "tool": block.get("name", "unknown"),
+                    "input": block.get("input", {}),
+                }))
+        return events
+
+    if t == "user":
+        content = event.get("message", {}).get("content", [])
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    events.append(BridgeEvent(EventType.TOOL_RESULT, {
+                        "content": block.get("content", ""),
+                    }))
+        return events
+
+    if t == "result":
+        return [BridgeEvent(EventType.DONE, {})]
+
+    # --- Compatibilidad con eventos crudos de la API SSE -------------------
     if t == "content_block_delta":
         text = event.get("delta", {}).get("text", "")
         if text:
-            return BridgeEvent(EventType.TOKEN, {"text": text})
-
+            return [BridgeEvent(EventType.TOKEN, {"text": text})]
     elif t in ("tool_use", "tool_call"):
-        return BridgeEvent(EventType.TOOL_USE, {
+        return [BridgeEvent(EventType.TOOL_USE, {
             "tool": event.get("name", "unknown"),
             "input": event.get("input", {}),
-        })
-
+        })]
     elif t == "tool_result":
-        return BridgeEvent(EventType.TOOL_RESULT, {
-            "content": event.get("content", ""),
-        })
-
+        return [BridgeEvent(EventType.TOOL_RESULT, {"content": event.get("content", "")})]
     elif t in ("message_stop", "end"):
-        return BridgeEvent(EventType.DONE, {})
+        return [BridgeEvent(EventType.DONE, {})]
 
     if t:
         logger.debug("parse_claude_json_line: unhandled event type %r", t)
-    return None
+    return events
 
 
 # ---------------------------------------------------------------------------
@@ -606,15 +641,17 @@ class Acople:
                 objects, buffer = _extract_json_objects(buffer)
                 for obj_str in objects:
                     if cfg.stream_format == "opencode-json":
-                        event = parse_opencode_json_line(obj_str)
+                        ev = parse_opencode_json_line(obj_str)
+                        events = [ev] if ev else []
                     else:
-                        event = parse_claude_json_line(obj_str)
-                    if event:
+                        events = parse_claude_json_line(obj_str)
+                    if not events:
+                        logger.debug("Dropped unrecognized JSON object (%d bytes)", len(obj_str))
+                        continue
+                    for event in events:
                         if event.type == EventType.DONE:
                             done_emitted = True
                         yield event
-                    else:
-                        logger.debug("Dropped unrecognized JSON object (%d bytes)", len(obj_str))
             else:
                 # Plain-text: buffereamos para detectar markers <acople-tool>.
                 buffer += _ANSI_RE.sub("", chunk)

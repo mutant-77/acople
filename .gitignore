@@ -31,6 +31,9 @@ env/
 *.swp
 *.swo
 
+# Scripts locales
+Acople-Server.bat
+
 # SO / Archivos de sistema
 .DS_Store
 Thumbs.db

@@ -49,7 +49,7 @@ Built-in **concurrency control**, process lifecycle management, and API Key auth
 pip install acople[server]
 
 # 2. Start the server
-uvicorn acople.server:app --port 8000
+uvicorn acople.server:app --port 62000
 ```
 
 Done! You can now use the agent from your app.
@@ -73,7 +73,7 @@ Or if you prefer using the HTTP server:
 
 ```bash
 # The easiest way
-curl -X POST http://localhost:8000/chat/simple \
+curl -X POST http://localhost:62000/chat/simple \
   -H "Content-Type: application/json" \
   -d '{"prompt": "create a python hello world"}'
 ```
@@ -126,9 +126,9 @@ Acople comes with a modern, ready-to-use web interface to test your agents, chec
 
 Just start your server:
 ```bash
-uvicorn acople.server:app --port 8000
+uvicorn acople.server:app --port 62000
 ```
-And open in your browser: **`http://localhost:8000/ui`**
+And open in your browser: **`http://localhost:62000/ui`**
 
 ---
 
@@ -137,7 +137,7 @@ And open in your browser: **`http://localhost:8000/ui`**
 Acople can act as a local **OpenAI-compatible gateway**. This means you can point any tool that supports OpenAI (like [NullClaw](https://github.com/nullclaw/nullclaw), *Continue*, *Cursor*, etc.) to your local Acople server.
 
 **Configuration for your tools:**
-- **Base URL:** `http://localhost:8000/v1`
+- **Base URL:** `http://localhost:62000/v1`
 - **API Key:** `any-string` (or your `ACOPLE_API_KEY`)
 - **Model:** `acople/claude`, `acople/gemini`, etc.
 
@@ -216,7 +216,7 @@ Acople can generate images using OpenAI's `gpt-image-1`:
 export OPENAI_API_KEY="sk-..."
 
 # Generate an image
-curl -X POST http://localhost:8000/image/generate \
+curl -X POST http://localhost:62000/image/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt": "A futuristic city at sunset", "size": "1024x1024", "quality": "high"}'
 ```
@@ -254,7 +254,7 @@ def chat(prompt):
     with httpx.Client() as client:
         # Remember to pass the API Key if you configured it!
         headers = {"X-API-Key": "my_secret"} 
-        with client.stream("POST", "http://localhost:8000/chat", json={"prompt": prompt}, headers=headers) as r:
+        with client.stream("POST", "http://localhost:62000/chat", json={"prompt": prompt}, headers=headers) as r:
             for line in r.iter_lines():
                 if line.startswith("data: "):
                     event = json.loads(line[6:])
