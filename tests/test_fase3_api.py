@@ -289,3 +289,104 @@ class TestFixesJSONyOpenAI:
         # Debe responder con 200 aunque haya hecho fallback
         assert response.status_code == 200
         assert response.json()["model"] == "gpt-4-turbo"
+
+    def test_extract_json_payload_helper(self):
+        """response_format JSON: el extractor limpia fences/prosa y descarta fragmentos."""
+        import json
+
+        from acople.server import _extract_json_payload
+
+        # fences + prosa alrededor
+        out = _extract_json_payload("Aqui tienes:\n```json\n{\"a\": 1}\n```\nlisto")
+        assert json.loads(out) == {"a": 1}
+
+        # fragmento de prosa con llaves ANTES del JSON real → se descarta
+        raw = "formato { ciudad, pais } y el resultado es {\"empresa\": \"X\", \"n\": 3}"
+        assert json.loads(_extract_json_payload(raw)) == {"empresa": "X", "n": 3}
+
+        # array de nivel superior con llaves dentro de strings
+        assert json.loads(_extract_json_payload('res: [1, {"k": "}"}] fin')) == [1, {"k": "}"}]
+
+        # texto sin JSON se devuelve tal cual
+        assert _extract_json_payload("no hay json") == "no hay json"
+
+    def test_openai_json_mode_non_streaming_clean(self):
+        """response_format=json_object: la respuesta no-streaming es JSON puro y parseable."""
+        import json
+        from unittest.mock import patch
+
+        from fastapi.testclient import TestClient
+
+        from acople.server import app, EventType
+
+        async def mock_workflow(*args, **kwargs):
+            from acople import BridgeEvent
+            # El agente envuelve el JSON en fences y añade prosa
+            yield BridgeEvent(EventType.TOKEN, {"text": "Claro, aqui tienes:\n```json\n"})
+            yield BridgeEvent(EventType.TOKEN, {"text": '{"empresa": "ACME", "sedes": [{"ciudad": "Madrid"}]}'})
+            yield BridgeEvent(EventType.TOKEN, {"text": "\n```\nEspero que sirva."})
+            yield BridgeEvent(EventType.DONE, {})
+
+        with (
+            patch("acople.server._unified_chat_workflow", return_value=mock_workflow()),
+            patch("acople.server._DEFAULT_AGENT", "claude"),
+            patch("shutil.which", return_value="/usr/bin/claude"),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "messages": [{"role": "user", "content": "json please"}],
+                    "model": "claude",
+                    "stream": False,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+
+        assert response.status_code == 200
+        content = response.json()["choices"][0]["message"]["content"]
+        assert not content.lstrip().startswith("```")
+        assert json.loads(content) == {"empresa": "ACME", "sedes": [{"ciudad": "Madrid"}]}
+
+    def test_openai_json_mode_streaming_clean(self):
+        """response_format=json_object: el streaming emite el JSON saneado en un solo chunk."""
+        import json
+        from unittest.mock import patch
+
+        from fastapi.testclient import TestClient
+
+        from acople.server import app, EventType
+
+        async def mock_workflow(*args, **kwargs):
+            from acople import BridgeEvent
+            yield BridgeEvent(EventType.TOKEN, {"text": "```json\n{\"ok\": "})
+            yield BridgeEvent(EventType.TOKEN, {"text": "true}\n```"})
+            yield BridgeEvent(EventType.DONE, {})
+
+        with (
+            patch("acople.server._unified_chat_workflow", return_value=mock_workflow()),
+            patch("acople.server._DEFAULT_AGENT", "claude"),
+            patch("shutil.which", return_value="/usr/bin/claude"),
+        ):
+            client = TestClient(app)
+            response = client.post(
+                "/v1/chat/completions",
+                json={
+                    "messages": [{"role": "user", "content": "json please"}],
+                    "model": "claude",
+                    "stream": True,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+
+        assert response.status_code == 200
+        # Reconstruir el contenido a partir de los deltas SSE
+        content = ""
+        for line in response.text.splitlines():
+            if not line.startswith("data: ") or "[DONE]" in line:
+                continue
+            payload = json.loads(line[len("data: "):])
+            delta = payload.get("choices", [{}])[0].get("delta", {})
+            content += delta.get("content", "")
+        assert "```" not in content
+        assert json.loads(content) == {"ok": True}

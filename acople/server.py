@@ -40,6 +40,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
 from acople import (
+    AGENT_CONFIGS,
     Acople,
     AgentNotFoundError,
     BridgeEvent,
@@ -105,6 +106,81 @@ def _tool_use_to_openai(event_data: dict, index: int) -> dict:
             "arguments": args,
         },
     }
+
+
+def _balanced_json_candidates(text: str) -> list[str]:
+    """Encuentra todos los valores JSON balanceados ({...} o [...]) de nivel
+    superior dentro del texto, respetando strings y escapes.
+
+    Funciona aunque el JSON venga envuelto en prosa o fences markdown, y
+    aunque existan fragmentos de llaves sueltos en el texto (ej: prosa como
+    ``formato { ciudad, pais }``): cada candidato se devuelve por separado
+    para que el llamador elija el que realmente parsea.
+    """
+    candidates: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch not in "{[":
+            i += 1
+            continue
+        opener, closer = (ch, "}") if ch == "{" else (ch, "]")
+        depth = 0
+        in_string = False
+        escape = False
+        end = -1
+        for j in range(i, n):
+            c = text[j]
+            if escape:
+                escape = False
+                continue
+            if c == "\\" and in_string:
+                escape = True
+                continue
+            if c == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == opener:
+                depth += 1
+            elif c == closer:
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end != -1:
+            candidates.append(text[i:end + 1])
+            i = end + 1
+        else:
+            break  # apertura sin cierre: no hay más candidatos completos
+    return candidates
+
+
+def _extract_json_payload(text: str) -> str:
+    """Devuelve JSON limpio a partir de la respuesta cruda de un agente.
+
+    Tolera fences de código markdown y prosa alrededor del JSON. Recoge todos
+    los valores balanceados del texto y devuelve, ya normalizado, el mayor que
+    parsee como JSON válido. Si nada parsea, devuelve el texto original
+    (recortado) sin cambios.
+    """
+    if not text:
+        return text
+
+    best: str | None = None
+    best_len = -1
+    for cand in _balanced_json_candidates(text):
+        try:
+            parsed = json.loads(cand)
+        except Exception:
+            continue
+        if len(cand) > best_len:
+            best = json.dumps(parsed, ensure_ascii=False)
+            best_len = len(cand)
+
+    return best if best is not None else text.strip()
 
 
 _DEFAULT_AGENT: str | None = None
@@ -511,21 +587,43 @@ async def openai_compatibility(request: Request):
     full_model = body.get("model", _DEFAULT_AGENT or "claude")
     tools = body.get("tools") or None
     tool_choice = body.get("tool_choice")
-    
-    # Normalización Senior: Mapear nombre de modelo a binario de agente conocido
+
+    # response_format (estándar OpenAI): si se pide JSON, debemos garantizar
+    # que la respuesta sea JSON limpio (sin fences ni prosa alrededor).
+    response_format = body.get("response_format")
+    rf_type = response_format.get("type") if isinstance(response_format, dict) else None
+    json_mode = rf_type in ("json_object", "json_schema")
+    if json_mode:
+        # Reforzar la instrucción al agente además del saneado posterior.
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "Devuelve la respuesta como un único objeto JSON válido "
+                    "DIRECTAMENTE en tu mensaje de texto. Reglas estrictas: "
+                    "(1) NO uses herramientas, NO crees ni escribas archivos, "
+                    "NO ejecutes comandos; el JSON va en el texto de la respuesta. "
+                    "(2) NO incluyas explicaciones, comentarios ni fences de "
+                    "código (```). (3) Tu respuesta completa debe poder parsearse "
+                    "directamente con un parser JSON."
+                ),
+            },
+            *messages,
+        ]
+
+    # Normalización Senior: Mapear nombre de modelo a binario de agente conocido.
+    # Se usa AGENT_CONFIGS como única fuente de verdad para no quedar desfasado
+    # respecto a los agentes realmente soportados (claude, gemini, codex,
+    # opencode, kilo, qwen).
     raw_name = full_model.split("/")[-1] if "/" in full_model else full_model
     raw_name_lower = raw_name.lower()
-    
+
     agent_name = None
-    if raw_name_lower.startswith("claude"):
-        agent_name = "claude"
-    elif raw_name_lower.startswith("qwen"):
-        agent_name = "qwen"
-    elif raw_name_lower.startswith("llama"):
-        agent_name = "llama"
-    elif raw_name_lower.startswith("kilo"):
-        agent_name = "kilo"
-    
+    for known in AGENT_CONFIGS:
+        if raw_name_lower == known or raw_name_lower.startswith(known):
+            agent_name = known
+            break
+
     # Fallback al agente por defecto si no hay coincidencia clara o el binario no existe
     if not agent_name or not shutil.which(agent_name):
         orig_agent = agent_name
@@ -556,15 +654,22 @@ async def openai_compatibility(request: Request):
         async def sse_adapter():
             tool_index = 0
             has_tool_calls = False
+            json_buffer = ""  # en json_mode acumulamos tokens para limpiarlos al final
             try:
                 async for event in workflow:
                     if event.type == EventType.TOKEN:
+                        text = event.data.get("text", "")
+                        if json_mode:
+                            # No emitir tokens crudos: el JSON puede llegar con
+                            # fences/prosa parciales. Se sanea y emite en DONE.
+                            json_buffer += text
+                            continue
                         chunk = {
                             "id": "chatcmpl-" + uuid.uuid4().hex[:12],
                             "object": "chat.completion.chunk",
                             "created": int(time.time()),
                             "model": full_model,
-                            "choices": [{"delta": {"content": event.data.get("text", "")}, "index": 0, "finish_reason": None}]
+                            "choices": [{"delta": {"content": text}, "index": 0, "finish_reason": None}]
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
                     elif event.type == EventType.TOOL_USE:
@@ -580,6 +685,16 @@ async def openai_compatibility(request: Request):
                         }
                         yield f"data: {json.dumps(chunk)}\n\n"
                     elif event.type == EventType.DONE:
+                        if json_mode and json_buffer:
+                            cleaned = _extract_json_payload(json_buffer)
+                            content_chunk = {
+                                "id": "chatcmpl-" + uuid.uuid4().hex[:12],
+                                "object": "chat.completion.chunk",
+                                "created": int(time.time()),
+                                "model": full_model,
+                                "choices": [{"delta": {"content": cleaned}, "index": 0, "finish_reason": None}]
+                            }
+                            yield f"data: {json.dumps(content_chunk)}\n\n"
                         finish_reason = "tool_calls" if has_tool_calls else "stop"
                         chunk = {
                             "id": "chatcmpl-" + uuid.uuid4().hex[:12],
@@ -628,7 +743,11 @@ async def openai_compatibility(request: Request):
         if error_message:
             raise HTTPException(status_code=502, detail=error_message)
 
-        message: dict = {"role": "assistant", "content": full_response or None}
+        content = full_response or None
+        if json_mode and full_response:
+            content = _extract_json_payload(full_response)
+
+        message: dict = {"role": "assistant", "content": content}
         if collected_tool_calls:
             message["tool_calls"] = collected_tool_calls
 
