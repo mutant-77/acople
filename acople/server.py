@@ -288,7 +288,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization", "X-Session-ID", "X-Session-Options", "X-Acople-Cwd"],
 )
 
 
@@ -711,10 +711,27 @@ async def openai_compatibility(request: Request):
             logger.warning("X-Session-ID inválido ignorado: %r", client_session_id)
             client_session_id = None
 
+    client_cwd = request.headers.get("X-Acople-Cwd")
+    if client_cwd:
+        try:
+            client_cwd = str(validate_cwd(client_cwd))
+        except ValidationError:
+            logger.warning("X-Acople-Cwd inválido ignorado: %r", client_cwd)
+            client_cwd = None
+    else:
+        from acople.bridge import _DEFAULT_CWD
+        effective = _DEFAULT_CWD or Path.cwd()
+        logger.warning(
+            "X-Acople-Cwd no recibido — el agente correrá en %s. "
+            "Configura ACOPLE_DEFAULT_CWD en .env para establecer un directorio por defecto.",
+            effective,
+        )
+
     workflow = _unified_chat_workflow(
         messages=messages,
         agent_name=agent_name,
         session_id=client_session_id,
+        cwd=client_cwd,
         max_history=max_history,
         model=full_model,
         tools=tools,

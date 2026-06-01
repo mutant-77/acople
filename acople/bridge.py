@@ -22,6 +22,9 @@ _ANSI_RE = re.compile(r'\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 logger = logging.getLogger("acople")
 
+_env_cwd = os.environ.get("ACOPLE_DEFAULT_CWD", "").strip()
+_DEFAULT_CWD: Path | None = Path(_env_cwd).resolve() if _env_cwd else None
+
 
 # ---------------------------------------------------------------------------
 # Tipos de eventos normalizados
@@ -502,7 +505,7 @@ class Acople:
             self.validate_binary()
             full_prompt = f"{system}\n\n{prompt}" if system else prompt
             cmd = self._build_cmd(full_prompt)
-            work_dir = Path(cwd) if cwd else Path.cwd()
+            work_dir = Path(cwd) if cwd else (_DEFAULT_CWD or Path.cwd())
 
             logger.info(f"Starting agent: {self.agent_name}")
             try:
