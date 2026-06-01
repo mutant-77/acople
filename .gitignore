@@ -33,6 +33,7 @@ env/
 
 # Scripts locales
 acople-server.bat
+acople-web
 
 # SO / Archivos de sistema
 .DS_Store
