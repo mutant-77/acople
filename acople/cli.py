@@ -148,9 +148,9 @@ async def cmd_doctor():
     print("\n[Server] Verificando...")
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get("http://localhost:62000/health", timeout=2.0)
+            r = await client.get("http://localhost:47334/health", timeout=2.0)
             if r.status_code == 200:
-                print("  [OK] Servidor corriendo en localhost:62000")
+                print("  [OK] Servidor corriendo en localhost:47334")
             else:
                 print(f"  [!] Servidor respondio: {r.status_code}")
     except httpx.ConnectError:
@@ -185,7 +185,7 @@ async def cmd_detect():
             # Try to get models
             try:
                 async with httpx.AsyncClient() as client:
-                    r = await client.get(f"http://localhost:62000/models?agent={name}", timeout=5.0)
+                    r = await client.get(f"http://localhost:47334/models?agent={name}", timeout=5.0)
                     if r.status_code == 200:
                         data = r.json()
                         if data.get("models"):
@@ -196,11 +196,11 @@ async def cmd_detect():
     # Check server
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get("http://localhost:62000/health", timeout=2.0)
+            r = await client.get("http://localhost:47334/health", timeout=2.0)
             if r.status_code == 200:
-                print("\n[OK] Servidor activo en localhost:62000")
+                print("\n[OK] Servidor activo en localhost:47334")
     except Exception:
-        print("\n[!] Servidor no activo (ejecuta 'uvicorn acople.server:app' para iniciar)")
+        print("\n[!] Servidor no activo (ejecuta 'uvicorn acople.server:app --port 47334' para iniciar)")
 
 
 if __name__ == "__main__":

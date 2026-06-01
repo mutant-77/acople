@@ -32,7 +32,7 @@ env/
 *.swo
 
 # Scripts locales
-Acople-Server.bat
+acople-server.bat
 
 # SO / Archivos de sistema
 .DS_Store

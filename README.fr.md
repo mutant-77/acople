@@ -50,7 +50,7 @@ Acople gère l'analyse complexe des flux de terminaux, vous donnant des jetons (
 pip install acople[server]
 
 # 2. Démarrez le serveur
-uvicorn acople.server:app --port 62000
+uvicorn acople.server:app --port 47334
 ```
 
 C'est prêt ! Vous pouvez maintenant utiliser l'agent depuis votre application.
@@ -74,7 +74,7 @@ Ou si vous préférez utiliser le serveur HTTP :
 
 ```bash
 # La méthode la plus simple
-curl -X POST http://localhost:62000/chat/simple \
+curl -X POST http://localhost:47334/chat/simple \
   -H "Content-Type: application/json" \
   -d '{"prompt": "crée un hello world en python"}'
 ```
@@ -127,9 +127,9 @@ Acople est livré avec une interface web moderne prête à l'emploi pour tester 
 
 Démarrez simplement votre serveur :
 ```bash
-uvicorn acople.server:app --port 62000
+uvicorn acople.server:app --port 47334
 ```
-Et ouvrez dans votre navigateur : **`http://localhost:62000/ui`**
+Et ouvrez dans votre navigateur : **`http://localhost:47334/ui`**
 
 ---
 
@@ -138,7 +138,7 @@ Et ouvrez dans votre navigateur : **`http://localhost:62000/ui`**
 Acople peut agir comme une **passerelle locale compatible OpenAI**. Cela signifie que vous pouvez pointer n'importe quel outil prenant en charge OpenAI (comme [NullClaw](https://github.com/nullclaw/nullclaw), *Continue*, *Cursor*, etc.) vers votre serveur local Acople.
 
 **Configuration pour vos outils :**
-- **Base URL :** `http://localhost:62000/v1`
+- **Base URL :** `http://localhost:47334/v1`
 - **API Key :** `n'importe-quelle-chaîne` (ou votre `ACOPLE_API_KEY`)
 - **Model :** `acople/claude`, `acople/gemini`, etc.
 
@@ -217,7 +217,7 @@ Acople peut générer des images en utilisant `gpt-image-1` d'OpenAI :
 export OPENAI_API_KEY="sk-..."
 
 # Générez une image
-curl -X POST http://localhost:62000/image/generate \
+curl -X POST http://localhost:47334/image/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Une ville futuriste au coucher du soleil", "size": "1024x1024", "quality": "high"}'
 ```
@@ -255,7 +255,7 @@ def chat(prompt):
     with httpx.Client() as client:
         # N'oubliez pas de passer la clé API si vous l'avez configurée !
         headers = {"X-API-Key": "mon_secret"} 
-        with client.stream("POST", "http://localhost:62000/chat", json={"prompt": prompt}, headers=headers) as r:
+        with client.stream("POST", "http://localhost:47334/chat", json={"prompt": prompt}, headers=headers) as r:
             for line in r.iter_lines():
                 if line.startswith("data: "):
                     event = json.loads(line[6:])
