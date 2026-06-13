@@ -103,8 +103,8 @@ class TestFase3APISimplificada:
             "/chat/simple",
             json={"prompt": "hola"}
         )
-        # Puede ser 200 (si hay agente) o 503 (si no hay)
-        assert response.status_code in [200, 503]
+        # 200 with agent, 400 "No agent available" without agent (no lifespan), 503 otherwise
+        assert response.status_code in [200, 400, 503]
 
 
 class TestFase3Endpoints:
@@ -123,8 +123,8 @@ class TestFase3Endpoints:
             "/chat",
             json={"prompt": ""}
         )
-        # Acepta (puede devolverstreaming o error)
-        assert response.status_code in [200, 422, 500]
+        # 200 with agent, 400 "No agent available" without agent (no lifespan), 422/500 on error
+        assert response.status_code in [200, 400, 422, 500]
 
     def test_chat_full_request(self):
         """3.3 POST /chat acepta todos los parámetros"""
@@ -204,7 +204,8 @@ class TestFixesJSONyOpenAI:
 
         assert response.status_code == 502
         body = response.json()
-        assert "Agent crashed" in body.get("detail", "")
+        # I9: body tiene forma OpenAI, no forma FastAPI {"detail": ...}
+        assert body.get("error", {}).get("message") == "Agent crashed"
 
     def test_openai_streaming_error_event(self):
         """Fix 2+4: Streaming /v1/chat/completions emite error SSE y luego [DONE]."""

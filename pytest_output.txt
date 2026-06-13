@@ -1,0 +1,98 @@
+........................FF.............................................. [ 17%]
+..............................................................FF........ [ 34%]
+........................................................................ [ 52%]
+..........FFFFF..................................................s...... [ 69%]
+........................................................................ [ 86%]
+.......................................................                  [100%]
+================================== FAILURES ===================================
+___________ TestServerEndpointCoverage.test_chat_validation_errors ____________
+tests\test_bridge_core.py:288: in test_chat_validation_errors
+    assert response.status_code == 422
+E   assert 400 == 422
+E    +  where 400 = <Response [400 Bad Request]>.status_code
+__________ TestServerEndpointCoverage.test_chat_simple_empty_prompt ___________
+tests\test_bridge_core.py:301: in test_chat_simple_empty_prompt
+    assert response.status_code == 422
+E   assert 400 == 422
+E    +  where 400 = <Response [400 Bad Request]>.status_code
+______ TestFase3APISimplificada.test_chat_simple_endpoint_accepts_prompt ______
+tests\test_fase3_api.py:107: in test_chat_simple_endpoint_accepts_prompt
+    assert response.status_code in [200, 503]
+E   assert 400 in [200, 503]
+E    +  where 400 = <Response [400 Bad Request]>.status_code
+________________ TestFase3Endpoints.test_chat_endpoint_exists _________________
+tests\test_fase3_api.py:127: in test_chat_endpoint_exists
+    assert response.status_code in [200, 422, 500]
+E   assert 400 in [200, 422, 500]
+E    +  where 400 = <Response [400 Bad Request]>.status_code
+___________________ TestFase6Docker.test_dockerfile_exists ____________________
+tests\test_fase6_extras.py:17: in test_dockerfile_exists
+    assert (root / "Dockerfile").exists()
+E   AssertionError: assert False
+E    +  where False = exists()
+E    +    where exists = (WindowsPath('E:/Codigo/Acople') / 'Dockerfile').exists
+_________________ TestFase6Docker.test_dockerfile_has_python __________________
+tests\test_fase6_extras.py:22: in test_dockerfile_has_python
+    content = (root / "Dockerfile").read_text()
+C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\pathlib.py:1134: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\pathlib.py:1119: in open
+    return self._accessor.open(self, mode, buffering, encoding, errors,
+E   FileNotFoundError: [Errno 2] No such file or directory: 'E:\\Codigo\\Acople\\Dockerfile'
+________________ TestFase6Docker.test_dockerfile_copies_acople ________________
+tests\test_fase6_extras.py:29: in test_dockerfile_copies_acople
+    content = (root / "Dockerfile").read_text()
+C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\pathlib.py:1134: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\pathlib.py:1119: in open
+    return self._accessor.open(self, mode, buffering, encoding, errors,
+E   FileNotFoundError: [Errno 2] No such file or directory: 'E:\\Codigo\\Acople\\Dockerfile'
+________________ TestFase6Docker.test_dockerfile_exposes_port _________________
+tests\test_fase6_extras.py:36: in test_dockerfile_exposes_port
+    content = (root / "Dockerfile").read_text()
+C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\pathlib.py:1134: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\pathlib.py:1119: in open
+    return self._accessor.open(self, mode, buffering, encoding, errors,
+E   FileNotFoundError: [Errno 2] No such file or directory: 'E:\\Codigo\\Acople\\Dockerfile'
+________________ TestFase6Docker.test_dockerfile_installs_deps ________________
+tests\test_fase6_extras.py:43: in test_dockerfile_installs_deps
+    content = (root / "Dockerfile").read_text()
+C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\pathlib.py:1134: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\pathlib.py:1119: in open
+    return self._accessor.open(self, mode, buffering, encoding, errors,
+E   FileNotFoundError: [Errno 2] No such file or directory: 'E:\\Codigo\\Acople\\Dockerfile'
+============================== warnings summary ===============================
+tests/test_bridge_core.py::TestDetectModels::test_agent_timeout_returns_empty
+tests/test_cli.py::TestMainDispatch::test_main_detect_dispatches
+tests/test_cli.py::TestCmdRun::test_cmd_run_agent_not_found
+  C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py:2181: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    self.name = name
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_concurrency.py::TestConcurrencyLimit::test_max_concurrency_returns_429
+  C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\asyncio\base_events.py:773: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    handle = events.Handle(callback, args, self, context)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_process_lifecycle.py::TestInterrupt::test_interrupt_calls_terminate_on_windows
+  C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py:2181: RuntimeWarning: coroutine 'TestCleanup.test_cleanup_escalates_to_kill.<locals>.fake_wait_timeout' was never awaited
+    self.name = name
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_bridge_core.py::TestServerEndpointCoverage::test_chat_validation_errors
+FAILED tests/test_bridge_core.py::TestServerEndpointCoverage::test_chat_simple_empty_prompt
+FAILED tests/test_fase3_api.py::TestFase3APISimplificada::test_chat_simple_endpoint_accepts_prompt
+FAILED tests/test_fase3_api.py::TestFase3Endpoints::test_chat_endpoint_exists
+FAILED tests/test_fase6_extras.py::TestFase6Docker::test_dockerfile_exists - ...
+FAILED tests/test_fase6_extras.py::TestFase6Docker::test_dockerfile_has_python
+FAILED tests/test_fase6_extras.py::TestFase6Docker::test_dockerfile_copies_acople
+FAILED tests/test_fase6_extras.py::TestFase6Docker::test_dockerfile_exposes_port
+FAILED tests/test_fase6_extras.py::TestFase6Docker::test_dockerfile_installs_deps
+9 failed, 405 passed, 1 skipped, 5 warnings in 24.96s

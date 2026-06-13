@@ -1,762 +1,689 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Acople Test Interface</title>
-    <style>
-        :root {
-            --bg: #0f172a;
-            --surface: #1e293b;
-            --primary: #3b82f6;
-            --primary-hover: #2563eb;
-            --text: #f8fafc;
-            --text-muted: #94a3b8;
-            --border: #334155;
-            --success: #10b981;
-            --error: #ef4444;
-            --font-main: 'Inter', -apple-system, sans-serif;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Acople Terminal</title>
+<style>
+:root {
+  --bg:        #282a36;
+  --bg-alt:    #1e2029;
+  --surface:   #303343;
+  --surface2:  #383b4d;
+  --border:    #44475a;
+  --comment:   #6272a4;
+  --fg:        #f8f8f2;
+  --fg-dim:    #c0c4d8;
+  --cyan:      #8be9fd;
+  --green:     #50fa7b;
+  --orange:    #ffb86c;
+  --pink:      #ff79c6;
+  --purple:    #bd93f9;
+  --red:       #ff5555;
+  --yellow:    #f1fa8c;
+  --font: 'JetBrains Mono', 'IBM Plex Mono', 'Cascadia Code', monospace;
+}
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
-        body {
-            font-family: var(--font-main);
-            background-color: var(--bg);
-            color: var(--text);
-            line-height: 1.5;
-            padding: 2rem;
-            min-height: 100vh;
-        }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--comment); }
 
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            display: grid;
-            grid-template-columns: 350px 1fr;
-            gap: 2rem;
-        }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
 
-        header {
-            grid-column: 1 / -1;
-            margin-bottom: 1rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding-bottom: 1rem;
-            border-bottom: 1px solid var(--border);
-        }
+/* ── Topbar ── */
+.topbar {
+  height: 28px;
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  gap: 12px;
+}
+.topbar-logo {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--purple);
+  text-transform: uppercase;
+}
+.topbar-sep { color: var(--border); font-size: 10px; }
+.topbar-item { font-size: 10px; color: var(--comment); display: flex; align-items: center; gap: 4px; }
+.topbar-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--red);
+}
+.topbar-dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.topbar-val { color: var(--fg-dim); font-weight: 600; }
 
-        h1 {
-            font-size: 1.8rem;
-            font-weight: 700;
-            background: linear-gradient(to right, #60a5fa, #a78bfa);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
+/* ── Layout ── */
+.container {
+  display: flex;
+  height: calc(100vh - 28px);
+}
+.sidebar {
+  width: 280px;
+  min-width: 280px;
+  border-right: 1px solid var(--border);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  background: var(--bg);
+}
+.main {
+  flex: 1;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
-        .panel {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 1.5rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-            display: flex;
-            flex-direction: column;
-            gap: 1rem;
-        }
+/* ── Box / Panel ── */
+.box {
+  border: 1px solid var(--border);
+  position: relative;
+  background: var(--bg);
+}
+.box-title {
+  position: absolute; top: -1px; left: 8px;
+  background: var(--bg);
+  padding: 0 4px;
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--comment);
+}
+.box-title.accent { color: var(--purple); }
+.box-title.cyan { color: var(--cyan); }
+.box-title.green { color: var(--green); }
+.box-title.pink { color: var(--pink); }
+.box-body { padding: 8px 6px; }
 
-        .panel-title {
-            font-size: 1.2rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: var(--text);
-        }
+/* ── Status rows ── */
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 10px;
+  border-bottom: 1px solid rgba(68,71,90,0.3);
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-label { color: var(--comment); }
+.stat-val { color: var(--fg-dim); font-weight: 600; }
 
-        .form-group {
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
+/* ── Tabs ── */
+.tab-bar {
+  display: flex;
+  height: 22px;
+  border-bottom: 1px solid var(--border);
+}
+.tab-btn {
+  font-family: var(--font);
+  font-size: 10px;
+  padding: 0 10px;
+  background: var(--bg-alt);
+  border: none;
+  border-right: 1px solid var(--border);
+  color: var(--comment);
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  transition: background 0.1s, color 0.1s;
+}
+.tab-btn:hover { color: var(--fg-dim); }
+.tab-btn.active {
+  background: var(--surface);
+  color: var(--fg);
+  border-bottom: 2px solid var(--purple);
+}
+.tab-content { display: none; flex-direction: column; flex: 1; }
+.tab-content.active { display: flex; }
 
-        label {
-            font-size: 0.875rem;
-            color: var(--text-muted);
-            font-weight: 500;
-        }
+/* ── Messages area ── */
+.messages {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 100px;
+}
+.token { color: var(--fg); }
+.token.system { color: var(--comment); font-style: italic; }
+.token.error { color: var(--red); }
+.event-label { color: var(--purple); font-weight: 700; font-size: 10px; }
+.event-tool { color: var(--cyan); font-weight: 600; }
 
-        input, select, textarea {
-            background: var(--bg);
-            border: 1px solid var(--border);
-            color: var(--text);
-            padding: 0.75rem;
-            border-radius: 6px;
-            font-family: inherit;
-            font-size: 0.95rem;
-            transition: border-color 0.2s;
-        }
+/* ── Buttons ── */
+.btn {
+  font-family: var(--font); font-size: 10px;
+  padding: 2px 7px; border: 1px solid var(--border);
+  background: transparent; color: var(--fg-dim);
+  cursor: pointer; border-radius: 2px;
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+}
+.btn:hover { border-color: var(--purple); color: var(--purple); }
+.btn-primary {
+  border-color: var(--purple); color: var(--purple);
+  background: rgba(189,147,249,0.1);
+}
+.btn-primary:hover { background: rgba(189,147,249,0.22); }
+.btn-danger { border-color: var(--red); color: var(--red); }
+.btn-danger:hover { background: rgba(255,85,85,0.15); }
+.btn-ghost { border: none; color: var(--comment); }
+.btn-ghost:hover { color: var(--fg-dim); }
+.btn:disabled {
+  opacity: 0.4; cursor: default;
+  border-color: var(--border); color: var(--comment);
+}
+.btn-group { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
 
-        input:focus, select:focus, textarea:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
+/* ── Inputs ── */
+.input {
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--fg); font-family: var(--font); font-size: 11px;
+  padding: 3px 7px; border-radius: 2px; outline: none; width: 100%;
+}
+.input:focus { border-color: var(--purple); }
+.input::placeholder { color: var(--comment); }
+textarea.input { resize: vertical; min-height: 52px; line-height: 1.4; }
+select.input { font-size: 10px; color: var(--fg-dim); cursor: pointer; }
+select.input option { background: var(--bg); color: var(--fg); }
 
-        textarea {
-            resize: vertical;
-            min-height: 100px;
-        }
+/* ── Input groups ── */
+.field { display: flex; flex-direction: column; gap: 2px; }
+.field label { font-size: 9px; color: var(--comment); text-transform: uppercase; letter-spacing: 0.08em; }
+.field-row { display: flex; gap: 4px; }
 
-        button {
-            background: var(--primary);
-            color: white;
-            border: none;
-            padding: 0.75rem 1.5rem;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background-color 0.2s, transform 0.1s;
-        }
+/* ── Image Gallery ── */
+.image-gallery {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 4px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  min-height: 100px;
+}
+.image-card {
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--bg-alt);
+}
+.image-card img { width: 100%; display: block; }
+.image-actions {
+  padding: 3px 5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9px;
+  color: var(--comment);
+  border-top: 1px solid var(--border);
+}
+.image-actions a { color: var(--cyan); text-decoration: none; }
+.image-actions a:hover { text-decoration: underline; }
+.image-loading {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  color: var(--comment);
+  font-size: 11px;
+  gap: 6px;
+}
+.spinner {
+  width: 14px; height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--purple);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
-        button:hover {
-            background: var(--primary-hover);
-        }
-
-        button:active {
-            transform: scale(0.98);
-        }
-
-        button.danger {
-            background: var(--error);
-        }
-
-        button.danger:hover {
-            background: #dc2626;
-        }
-
-        .button-group {
-            display: flex;
-            gap: 1rem;
-            margin-top: 0.5rem;
-        }
-
-        .status-indicator {
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: var(--error);
-            margin-right: 8px;
-        }
-
-        .status-indicator.online {
-            background: var(--success);
-            box-shadow: 0 0 8px var(--success);
-        }
-
-        .badge {
-            background: var(--border);
-            padding: 0.2rem 0.6rem;
-            border-radius: 12px;
-            font-size: 0.75rem;
-            color: var(--text-muted);
-        }
-
-        .info-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.5rem 0;
-            border-bottom: 1px solid var(--border);
-            font-size: 0.9rem;
-        }
-
-        .info-row:last-child {
-            border-bottom: none;
-        }
-
-        .chat-container {
-            display: flex;
-            flex-direction: column;
-            height: calc(100vh - 120px);
-        }
-
-        .messages {
-            flex-grow: 1;
-            background: var(--bg);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem;
-            overflow-y: auto;
-            margin-bottom: 1rem;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.9rem;
-            white-space: pre-wrap;
-            line-height: 1.6;
-        }
-
-        .token { color: #e2e8f0; }
-        .system { color: var(--text-muted); font-style: italic; }
-        .error { color: #fca5a5; }
-        .event-label { color: #93c5fd; font-weight: bold; }
-
-        .diagnostics-btn {
-            background: transparent;
-            border: 1px solid var(--border);
-            color: var(--text);
-        }
-        .diagnostics-btn:hover {
-            background: var(--border);
-        }
-        
-        .endpoints-list {
-            margin-top: 1rem;
-            font-size: 0.8rem;
-            color: var(--text-muted);
-        }
-        
-        .endpoints-list div {
-            margin-bottom: 0.3rem;
-            font-family: monospace;
-        }
-
-        .endpoint-method {
-            color: var(--primary);
-            font-weight: bold;
-            margin-right: 0.5rem;
-        }
-
-        .tabs { display: flex; gap: 0; margin-bottom: 1rem; }
-        .tab-btn {
-            flex: 1; padding: 0.6rem 1rem; background: var(--bg); border: 1px solid var(--border);
-            color: var(--text-muted); cursor: pointer; font-weight: 600; font-size: 0.9rem; transition: all 0.2s;
-        }
-        .tab-btn:first-child { border-radius: 8px 0 0 8px; }
-        .tab-btn:last-child { border-radius: 0 8px 8px 0; }
-        .tab-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
-        .tab-content { display: none; }
-        .tab-content.active { display: flex; flex-direction: column; flex-grow: 1; }
-
-        .image-gallery {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 1rem; padding: 1rem; overflow-y: auto; flex-grow: 1;
-            background: var(--bg); border: 1px solid var(--border); border-radius: 8px; min-height: 200px;
-        }
-        .image-card {
-            border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface);
-        }
-        .image-card img { width: 100%; display: block; }
-        .image-card .image-actions {
-            padding: 0.5rem; display: flex; justify-content: space-between; align-items: center; font-size: 0.8rem; color: var(--text-muted);
-        }
-        .image-card .image-actions a { color: var(--primary); text-decoration: none; }
-        .image-loading {
-            display: flex; align-items: center; justify-content: center; padding: 3rem;
-            color: var(--text-muted); font-style: italic;
-        }
-        .image-loading .spinner {
-            width: 24px; height: 24px; border: 3px solid var(--border); border-top-color: var(--primary);
-            border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 0.75rem;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-    </style>
+/* ── Helpers ── */
+.mt-2 { margin-top: 2px; }
+.mt-4 { margin-top: 4px; }
+.grow { flex: 1; }
+.flex-col { display: flex; flex-direction: column; }
+</style>
 </head>
 <body>
 
+<div class="topbar">
+  <span class="topbar-logo">◆ Acople</span>
+  <span class="topbar-sep">|</span>
+  <span class="topbar-item">
+    <span class="topbar-dot" id="status-dot"></span>
+    <span id="status-text">Offline</span>
+  </span>
+  <span class="topbar-sep">|</span>
+  <span class="topbar-item">Agent: <span class="topbar-val" id="info-agent">—</span></span>
+  <span class="topbar-item">Image: <span class="topbar-val" id="info-image">—</span></span>
+  <span style="flex:1"></span>
+  <span class="topbar-item" style="font-size:9px;color:var(--border)">v1.3.0</span>
+</div>
+
 <div class="container">
-    <header>
-        <h1>Acople Interface</h1>
-        <div id="connection-status">
-            <span class="status-indicator" id="status-dot"></span>
-            <span id="status-text">Disconnected</span>
-        </div>
-    </header>
 
-    <div class="sidebar">
-        <div class="panel">
-            <h2 class="panel-title">Configuration</h2>
-            <div class="form-group">
-                <label>Server URL</label>
-                <input type="text" id="server-url" value="http://localhost:47334">
-            </div>
-            <div class="form-group">
-                <label>API Key (Optional)</label>
-                <input type="password" id="api-key" placeholder="Enter API Key">
-            </div>
-            <button id="connect-btn">Check Connection</button>
-        </div>
-
-        <div class="panel" style="margin-top: 1rem;">
-            <h2 class="panel-title">System Status</h2>
-            <div id="system-info">
-                <div class="info-row">
-                    <span>Active Agent</span>
-                    <span class="badge" id="info-agent">Unknown</span>
-                </div>
-                <div class="info-row">
-                    <span>Image Generation</span>
-                    <span class="badge" id="info-image">Unknown</span>
-                </div>
-                <div class="info-row">
-                    <span>OpenAI Gateway</span>
-                    <span class="badge" id="info-openai">Active</span>
-                </div>
-            </div>
-            <button class="diagnostics-btn" id="diagnostics-btn" style="margin-top: 1rem;">Run Diagnostics</button>
-            
-            <div class="endpoints-list">
-                <div style="color: var(--text); margin-bottom:0.5rem">Available Endpoints:</div>
-                <div><span class="endpoint-method">GET</span> /agents</div>
-                <div><span class="endpoint-method">GET</span> /models</div>
-                <div><span class="endpoint-method">GET</span> /detect</div>
-                <div><span class="endpoint-method">GET</span> /diagnose</div>
-                <div><span class="endpoint-method">POST</span> /chat</div>
-                <div><span class="endpoint-method">POST</span> /chat/simple</div>
-                <div><span class="endpoint-method">POST</span> /image/generate</div>
-                <div><span class="endpoint-method">POST</span> /interrupt</div>
-                <div style="margin-top: 0.5rem; color: var(--primary); font-weight: bold;">OpenAI Gateway (New!):</div>
-                <div><span class="endpoint-method">POST</span> /v1/chat/completions</div>
-                <div><span class="endpoint-method">GET</span> /v1/models</div>
-            </div>
-        </div>
+<div class="sidebar">
+  <div class="box">
+    <div class="box-title accent">Server</div>
+    <div class="box-body">
+      <div class="field">
+        <label>URL</label>
+        <input class="input" type="text" id="server-url" value="http://localhost:47334">
+      </div>
+      <div class="field mt-2">
+        <label>API Key</label>
+        <input class="input" type="password" id="api-key" placeholder="Optional">
+      </div>
+      <div class="btn-group" style="margin-top:6px">
+        <button class="btn btn-primary" id="connect-btn">Connect</button>
+        <button class="btn" id="diagnostics-btn">Diagnose</button>
+      </div>
     </div>
+  </div>
 
-    <div class="main-content chat-container">
-        <div class="panel" style="flex-grow: 1; display: flex; flex-direction: column;">
-            <div class="tabs">
-                <button class="tab-btn active" data-tab="chat">Chat</button>
-                <button class="tab-btn" data-tab="image">Image Generation</button>
-            </div>
-
-            <!-- Chat Tab -->
-            <div class="tab-content active" id="tab-chat">
-                <div class="messages" id="messages"></div>
-                <div class="form-group" style="margin-bottom: 0.5rem;">
-                    <div style="display:flex; gap: 1rem;">
-                        <div style="flex:1;">
-                             <label>Agent (Override)</label>
-                             <select id="agent-select">
-                                 <option value="">Default (Auto)</option>
-                             </select>
-                        </div>
-                        <div style="flex:1;">
-                            <label>Endpoint</label>
-                             <select id="endpoint-select">
-                                 <option value="/chat">/chat (Full)</option>
-                                 <option value="/chat/simple">/chat/simple</option>
-                             </select>
-                        </div>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label>System Prompt (Optional, /chat only)</label>
-                    <input type="text" id="system-prompt" placeholder="You are a helpful assistant...">
-                </div>
-                <div class="form-group" style="margin-top: 0.5rem;">
-                    <label>Prompt</label>
-                    <textarea id="prompt-input" placeholder="Type your prompt here..."></textarea>
-                </div>
-                <div class="button-group">
-                    <button id="send-btn">Send Request</button>
-                    <button id="interrupt-btn" class="danger">Interrupt</button>
-                    <button id="clear-btn" class="diagnostics-btn">Clear</button>
-                </div>
-            </div>
-
-            <!-- Image Tab -->
-            <div class="tab-content" id="tab-image">
-                <div class="image-gallery" id="image-gallery"></div>
-                <div class="form-group" style="margin-top: 1rem;">
-                    <div style="display:flex; gap: 1rem;">
-                        <div style="flex:1;">
-                            <label>Size</label>
-                            <select id="img-size">
-                                <option value="auto">Auto</option>
-                                <option value="1024x1024">1024×1024</option>
-                                <option value="1536x1024">1536×1024 (Landscape)</option>
-                                <option value="1024x1536">1024×1536 (Portrait)</option>
-                            </select>
-                        </div>
-                        <div style="flex:1;">
-                            <label>Quality</label>
-                            <select id="img-quality">
-                                <option value="auto">Auto</option>
-                                <option value="low">Low</option>
-                                <option value="medium">Medium</option>
-                                <option value="high">High</option>
-                            </select>
-                        </div>
-                        <div style="flex:0.5;">
-                            <label>Count</label>
-                            <input type="number" id="img-n" value="1" min="1" max="10">
-                        </div>
-                    </div>
-                </div>
-                <div class="form-group" style="margin-top: 0.5rem;">
-                    <label>Image Prompt</label>
-                    <textarea id="img-prompt" placeholder="Describe the image you want to generate..."></textarea>
-                </div>
-                <div class="button-group">
-                    <button id="img-generate-btn">Generate Image</button>
-                    <button id="img-clear-btn" class="diagnostics-btn">Clear Gallery</button>
-                </div>
-            </div>
-        </div>
+  <div class="box">
+    <div class="box-title">Status</div>
+    <div class="box-body">
+      <div class="stat-row"><span class="stat-label">Agent</span><span class="stat-val" id="si-agent">—</span></div>
+      <div class="stat-row"><span class="stat-label">Image Gen</span><span class="stat-val" id="si-image">—</span></div>
+      <div class="stat-row"><span class="stat-label">OpenAI GW</span><span class="stat-val" id="si-openai">—</span></div>
     </div>
+  </div>
+
+  <div class="box" style="flex:1">
+    <div class="box-title cyan">Endpoints</div>
+    <div class="box-body" style="font-size:9px;color:var(--comment);padding:6px">
+      <div style="padding:2px 0"><span style="color:var(--purple);font-weight:700">GET</span> /health</div>
+      <div style="padding:2px 0"><span style="color:var(--purple);font-weight:700">GET</span> /agents</div>
+      <div style="padding:2px 0"><span style="color:var(--purple);font-weight:700">GET</span> /models</div>
+      <div style="padding:2px 0"><span style="color:var(--purple);font-weight:700">GET</span> /diagnose</div>
+      <div style="padding:2px 0"><span style="color:var(--green);font-weight:700">POST</span> /chat</div>
+      <div style="padding:2px 0"><span style="color:var(--green);font-weight:700">POST</span> /chat/simple</div>
+      <div style="padding:2px 0"><span style="color:var(--green);font-weight:700">POST</span> /interrupt</div>
+      <div style="padding:2px 0"><span style="color:var(--green);font-weight:700">POST</span> /image/generate</div>
+      <div style="margin-top:4px;padding-top:4px;border-top:1px solid var(--border)"><span style="color:var(--orange);font-weight:700">POST</span> /v1/chat/completions</div>
+      <div style="padding:2px 0"><span style="color:var(--purple);font-weight:700">GET</span> /v1/models</div>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="chat">◆ Chat</button>
+    <button class="tab-btn" data-tab="image">◈ Image</button>
+  </div>
+
+  <div class="tab-content active flex-col grow" id="tab-chat">
+    <div class="messages" id="messages"></div>
+    <div class="field mt-2">
+      <div class="field-row">
+        <div style="flex:1" class="field">
+          <label>Agent</label>
+          <select class="input" id="agent-select">
+            <option value="">Default</option>
+          </select>
+        </div>
+        <div style="flex:1" class="field">
+          <label>Endpoint</label>
+          <select class="input" id="endpoint-select">
+            <option value="/chat">/chat</option>
+            <option value="/chat/simple">/chat/simple</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="field mt-2">
+      <label>System</label>
+      <input class="input" type="text" id="system-prompt" placeholder="Optional system prompt...">
+    </div>
+    <div class="field mt-2">
+      <label>Prompt</label>
+      <textarea class="input" id="prompt-input" placeholder="Type your prompt (Ctrl+Enter to send)" rows="2"></textarea>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" id="send-btn">Send</button>
+      <button class="btn btn-danger" id="interrupt-btn">Kill</button>
+      <button class="btn btn-ghost" id="clear-btn">Clear</button>
+    </div>
+  </div>
+
+  <div class="tab-content flex-col grow" id="tab-image">
+    <div class="image-gallery" id="image-gallery">
+      <div class="image-loading" style="border:none;color:var(--comment)">Enter a prompt and generate</div>
+    </div>
+    <div class="field-row mt-2">
+      <div class="field" style="flex:1">
+        <label>Size</label>
+        <select class="input" id="img-size">
+          <option value="auto">Auto</option>
+          <option value="1024x1024">1024×1024</option>
+          <option value="1536x1024">1536×1024</option>
+          <option value="1024x1536">1024×1536</option>
+        </select>
+      </div>
+      <div class="field" style="flex:1">
+        <label>Quality</label>
+        <select class="input" id="img-quality">
+          <option value="auto">Auto</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+      <div class="field" style="flex:0 0 60px">
+        <label>Count</label>
+        <input class="input" type="number" id="img-n" value="1" min="1" max="10">
+      </div>
+    </div>
+    <div class="field mt-2">
+      <label>Prompt</label>
+      <textarea class="input" id="img-prompt" placeholder="Describe the image..." rows="2"></textarea>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-primary" id="img-generate-btn">Generate</button>
+      <button class="btn btn-ghost" id="img-clear-btn">Clear All</button>
+    </div>
+  </div>
+</div>
+
 </div>
 
 <script>
-    const state = {
-        controller: null,
-        isGenerating: false,
-        currentAgent: null,
-    };
+const s = {
+  controller: null,
+  generating: false,
+  currentAgent: null,
+};
 
-    const els = {
-        serverUrl: document.getElementById('server-url'),
-        apiKey: document.getElementById('api-key'),
-        connectBtn: document.getElementById('connect-btn'),
-        statusDot: document.getElementById('status-dot'),
-        statusText: document.getElementById('status-text'),
-        infoAgent: document.getElementById('info-agent'),
-        agentSelect: document.getElementById('agent-select'),
-        endpointSelect: document.getElementById('endpoint-select'),
-        diagnosticsBtn: document.getElementById('diagnostics-btn'),
-        messages: document.getElementById('messages'),
-        systemPrompt: document.getElementById('system-prompt'),
-        promptInput: document.getElementById('prompt-input'),
-        sendBtn: document.getElementById('send-btn'),
-        interruptBtn: document.getElementById('interrupt-btn'),
-        clearBtn: document.getElementById('clear-btn')
-    };
+const $ = (id) => document.getElementById(id);
 
-    function appendMessage(text, type = 'token') {
-        const span = document.createElement('span');
-        span.className = type;
-        if (type === 'event') {
-            span.innerHTML = `<br><span class="event-label">[${text}]</span> `;
-        } else if (type === 'system') {
-            span.textContent = text + '\n';
-        } else {
-            span.textContent = text;
-        }
-        els.messages.appendChild(span);
-        els.messages.scrollTop = els.messages.scrollHeight;
+function url(path) {
+  return $('server-url').value.replace(/\/+$/, '') + path;
+}
+function headers() {
+  const h = { 'Content-Type': 'application/json' };
+  const k = $('api-key').value.trim();
+  if (k) h['X-API-Key'] = k;
+  return h;
+}
+
+// ── Render ──
+
+function msg(text, type = 'token') {
+  const m = $('messages');
+  const el = document.createElement('span');
+  el.className = 'token ' + type;
+  if (type === 'event') {
+    el.innerHTML = '\n<span class="event-label">[' + text + ']</span> ';
+  } else if (type === 'tool') {
+    el.innerHTML = '\n<span class="event-tool">TOOL:</span> ' + text;
+  } else {
+    el.textContent = text;
+  }
+  m.appendChild(el);
+  m.scrollTop = m.scrollHeight;
+}
+
+function renderStatus(data) {
+  const online = $('status-dot').classList.contains('online');
+  $('si-agent').textContent = data.agent || 'None';
+  $('si-agent').style.color = data.agent ? 'var(--green)' : 'var(--comment)';
+  $('si-image').textContent = data.image_ready ? 'Ready' : 'No Key';
+  $('si-image').style.color = data.image_ready ? 'var(--green)' : 'var(--comment)';
+  $('si-openai').textContent = 'Active';
+  $('si-openai').style.color = 'var(--green)';
+}
+
+// ── Connection ──
+
+async function checkConnection() {
+  try {
+    const res = await fetch(url('/health'), { headers: headers() });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    $('status-dot').classList.add('online');
+    $('status-text').textContent = 'Online';
+    $('status-text').style.color = 'var(--green)';
+    $('info-agent').textContent = data.agent || 'None';
+    $('info-image').textContent = data.image_ready ? 'Ready' : 'No Key';
+    s.currentAgent = data.agent;
+    renderStatus(data);
+    loadAgents();
+    msg('\n[connected] ' + url('/health') + '\n', 'system');
+  } catch (e) {
+    $('status-dot').classList.remove('online');
+    $('status-text').textContent = 'Offline';
+    $('status-text').style.color = 'var(--red)';
+    $('info-agent').textContent = '—';
+    $('info-image').textContent = '—';
+    msg('\n[error] ' + e.message + '\n', 'error');
+  }
+}
+
+async function loadAgents() {
+  try {
+    const res = await fetch(url('/agents'), { headers: headers() });
+    if (!res.ok) return;
+    const data = await res.json();
+    const sel = $('agent-select');
+    sel.innerHTML = '<option value="">Default</option>';
+    for (const [name, avail] of Object.entries(data.agents)) {
+      if (avail) { const o = document.createElement('option'); o.value = name; o.textContent = name; sel.appendChild(o); }
     }
+  } catch (e) { /* ignore */ }
+}
 
-    function getHeaders() {
-        const headers = { 'Content-Type': 'application/json' };
-        const key = els.apiKey.value.trim();
-        if (key) headers['X-API-Key'] = key;
-        return headers;
-    }
+async function runDiagnostics() {
+  msg('\n[diagnose] ' + url('/diagnose') + '\n', 'system');
+  try {
+    const res = await fetch(url('/diagnose'), { headers: headers() });
+    const data = await res.json();
+    msg(JSON.stringify(data, null, 2) + '\n', 'system');
+  } catch (e) {
+    msg('[error] ' + e.message + '\n', 'error');
+  }
+}
 
-    async function checkConnection() {
-        const url = els.serverUrl.value.replace(/\/$/, '') + '/health';
-        try {
-            const res = await fetch(url, { headers: getHeaders() });
-            if (res.ok) {
-                const data = await res.json();
-                els.statusDot.classList.add('online');
-                els.statusText.textContent = 'Connected';
-                const agent = data.agent || null;
-                els.infoAgent.textContent = agent || 'None';
-                els.infoAgent.style.color = agent ? 'var(--success)' : 'var(--text-muted)';
-                state.currentAgent = agent;
+// ── Chat ──
 
-                const imgEl = document.getElementById('info-image');
-                imgEl.textContent = data.image_ready ? 'Ready ✓' : 'No API Key';
-                imgEl.style.color = data.image_ready ? 'var(--success)' : 'var(--text-muted)';
+async function sendPrompt() {
+  const prompt = $('prompt-input').value.trim();
+  if (!prompt) return;
+  if (s.generating) { msg('\n[busy] already generating\n', 'system'); return; }
 
-                const openaiEl = document.getElementById('info-openai');
-                openaiEl.textContent = 'Active ✓';
-                openaiEl.style.color = 'var(--success)';
+  const endpoint = $('endpoint-select').value;
+  const payload = { prompt };
+  const sa = $('agent-select').value;
+  if (sa) payload.agent = sa;
+  if (endpoint === '/chat') {
+    const sys = $('system-prompt').value.trim();
+    if (sys) payload.system = sys;
+  }
 
-                await loadAgents();
-            } else {
-                throw new Error(`HTTP ${res.status}`);
-            }
-        } catch (e) {
-            els.statusDot.classList.remove('online');
-            els.statusText.textContent = 'Disconnected';
-            els.infoAgent.textContent = 'Unknown';
-            appendMessage(`[System Error] Failed to connect: ${e.message}`, 'error');
-        }
-    }
+  const agentLabel = sa || s.currentAgent || 'auto';
 
-    async function loadAgents() {
-        const url = els.serverUrl.value.replace(/\/$/, '') + '/agents';
-        try {
-            const res = await fetch(url, { headers: getHeaders() });
-            if (res.ok) {
-                const data = await res.json();
-                els.agentSelect.innerHTML = '<option value="">Default (Auto)</option>';
-                for (const [agent, available] of Object.entries(data.agents)) {
-                    if (available) {
-                        const opt = document.createElement('option');
-                        opt.value = agent;
-                        opt.textContent = agent;
-                        els.agentSelect.appendChild(opt);
-                    }
-                }
-            }
-        } catch (e) {
-            console.error("Failed to load agents", e);
-        }
-    }
+  msg('\n◈ [' + agentLabel + '] ' + endpoint + '\n', 'system');
+  $('prompt-input').value = '';
+  s.generating = true;
+  $('send-btn').textContent = 'Running';
+  $('send-btn').disabled = true;
+  s.controller = new AbortController();
 
-    async function runDiagnostics() {
-        const url = els.serverUrl.value.replace(/\/$/, '') + '/diagnose';
-        appendMessage(`\n[System] Running diagnostics on ${url}...`, 'system');
-        try {
-            const res = await fetch(url, { headers: getHeaders() });
-            const data = await res.json();
-            appendMessage(JSON.stringify(data, null, 2), 'system');
-        } catch (e) {
-            appendMessage(`[Error] Diagnostics failed: ${e.message}`, 'error');
-        }
-    }
-
-    async function sendPrompt() {
-        const prompt = els.promptInput.value.trim();
-        if (!prompt) return;
-
-        if (state.isGenerating) {
-            appendMessage(`[System] Already generating...`, 'system');
-            return;
-        }
-
-        const baseUrl = els.serverUrl.value.replace(/\/$/, '');
-        const endpoint = els.endpointSelect.value;
-        const url = baseUrl + endpoint;
-
-        const payload = { prompt };
-        const selectedAgent = els.agentSelect.value;
-        if (selectedAgent) payload.agent = selectedAgent;
-        if (endpoint === '/chat') {
-            const sysPrompt = els.systemPrompt.value.trim();
-            if (sysPrompt) payload.system = sysPrompt;
-        }
-
-        // Track and display the agent being used
-        const agentUsed = selectedAgent || state.currentAgent || 'auto';
-        state.currentAgent = agentUsed;
-        els.infoAgent.textContent = agentUsed;
-        els.infoAgent.style.color = 'var(--success)';
-
-        appendMessage(`\n[${agentUsed}] ${endpoint}\n`, 'system');
-        els.promptInput.value = '';
-        state.isGenerating = true;
-        els.sendBtn.textContent = 'Generating...';
-        els.sendBtn.disabled = true;
-
-        state.controller = new AbortController();
-
-        try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: getHeaders(),
-                body: JSON.stringify(payload),
-                signal: state.controller.signal
-            });
-
-            if (!response.ok) {
-                const err = await response.json().catch(() => ({}));
-                throw new Error(`HTTP ${response.status} - ${err.detail || 'Unknown error'}`);
-            }
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = '';
-
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const data = JSON.parse(line.slice(6));
-                            handleEvent(data);
-                        } catch (e) {
-                            console.error("Parse error", e, line);
-                        }
-                    }
-                }
-            }
-        } catch (e) {
-            if (e.name !== 'AbortError') {
-                appendMessage(`[Error] ${e.message}`, 'error');
-            }
-        } finally {
-            state.isGenerating = false;
-            els.sendBtn.textContent = 'Send Request';
-            els.sendBtn.disabled = false;
-            state.controller = null;
-        }
-    }
-
-    function handleEvent(event) {
-        switch (event.type) {
-            case 'token':
-                if (event.text) appendMessage(event.text, 'token');
-                break;
-            case 'tool_use':
-                appendMessage(`TOOL_USE: ${event.tool}`, 'event');
-                if (event.input) appendMessage('\n' + JSON.stringify(event.input, null, 2) + '\n', 'system');
-                break;
-            case 'tool_result':
-                appendMessage('TOOL_RESULT', 'event');
-                break;
-            case 'image':
-                addImageToGallery(event.b64, event.format, event.revised_prompt, event.index);
-                break;
-            case 'done':
-                appendMessage('DONE', 'event');
-                break;
-            case 'error':
-                appendMessage(`ERROR: ${event.message}`, 'error');
-                break;
-            case 'system':
-                // Internal agent output (stderr). Log to console only — not shown in chat.
-                console.debug('[agent-system]', event.message);
-                break;
-        }
-    }
-
-    function addImageToGallery(b64, format, revisedPrompt, index) {
-        const gallery = document.getElementById('image-gallery');
-        const loading = gallery.querySelector('.image-loading');
-        if (loading) loading.remove();
-
-        const card = document.createElement('div');
-        card.className = 'image-card';
-        const img = document.createElement('img');
-        img.src = `data:image/${format};base64,${b64}`;
-        img.alt = revisedPrompt || 'Generated image';
-        card.appendChild(img);
-
-        const actions = document.createElement('div');
-        actions.className = 'image-actions';
-        actions.innerHTML = `<span>#${(index || 0) + 1}</span>`;
-        const dl = document.createElement('a');
-        dl.href = img.src;
-        dl.download = `image_${Date.now()}_${index || 0}.${format}`;
-        dl.textContent = 'Download';
-        actions.appendChild(dl);
-        card.appendChild(actions);
-
-        gallery.prepend(card);
-    }
-
-    async function generateImage() {
-        const prompt = document.getElementById('img-prompt').value.trim();
-        if (!prompt) return;
-
-        const baseUrl = els.serverUrl.value.replace(/\/$/, '');
-        const gallery = document.getElementById('image-gallery');
-
-        const loading = document.createElement('div');
-        loading.className = 'image-loading';
-        loading.innerHTML = '<div class="spinner"></div> Generating image...';
-        gallery.prepend(loading);
-
-        const btn = document.getElementById('img-generate-btn');
-        btn.textContent = 'Generating...';
-        btn.disabled = true;
-
-        try {
-            const res = await fetch(baseUrl + '/image/generate', {
-                method: 'POST',
-                headers: getHeaders(),
-                body: JSON.stringify({
-                    prompt,
-                    size: document.getElementById('img-size').value,
-                    quality: document.getElementById('img-quality').value,
-                    n: parseInt(document.getElementById('img-n').value) || 1,
-                }),
-            });
-
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.detail || `HTTP ${res.status}`);
-            }
-
-            const data = await res.json();
-            if (loading.parentNode) loading.remove();
-            (data.images || []).forEach((img, i) => addImageToGallery(img.b64, img.format, img.revised_prompt, i));
-            document.getElementById('img-prompt').value = '';
-        } catch (e) {
-            if (loading.parentNode) loading.remove();
-            const errDiv = document.createElement('div');
-            errDiv.className = 'image-loading';
-            errDiv.style.color = 'var(--error)';
-            errDiv.textContent = `Error: ${e.message}`;
-            gallery.prepend(errDiv);
-        } finally {
-            btn.textContent = 'Generate Image';
-            btn.disabled = false;
-        }
-    }
-
-    async function interruptGeneration() {
-        if (!state.isGenerating) return;
-        
-        appendMessage(`\n[System] Sending interrupt...`, 'system');
-        const url = els.serverUrl.value.replace(/\/$/, '') + '/interrupt';
-        
-        try {
-            await fetch(url, { method: 'POST', headers: getHeaders() });
-        } catch (e) {
-            appendMessage(`[Error] Interrupt failed: ${e.message}`, 'error');
-        }
-    }
-
-    // Tab switching
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-        });
+  try {
+    const res = await fetch(url(endpoint), {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify(payload),
+      signal: s.controller.signal,
     });
-
-    // Event Listeners
-    els.connectBtn.addEventListener('click', checkConnection);
-    els.diagnosticsBtn.addEventListener('click', runDiagnostics);
-    els.sendBtn.addEventListener('click', sendPrompt);
-    els.interruptBtn.addEventListener('click', interruptGeneration);
-    els.clearBtn.addEventListener('click', () => { els.messages.innerHTML = ''; });
-    els.promptInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendPrompt();
-    });
-    function syncEndpointAffordances() {
-        const isFull = els.endpointSelect.value === '/chat';
-        els.systemPrompt.disabled = !isFull;
-        els.systemPrompt.placeholder = isFull
-            ? 'You are a helpful assistant...'
-            : '(only used by /chat)';
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(res.status + ' ' + (err.detail || ''));
     }
-    els.endpointSelect.addEventListener('change', syncEndpointAffordances);
-    syncEndpointAffordances();
-    document.getElementById('img-generate-btn').addEventListener('click', generateImage);
-    document.getElementById('img-clear-btn').addEventListener('click', () => {
-        document.getElementById('image-gallery').innerHTML = '';
-    });
-    document.getElementById('img-prompt').addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) generateImage();
-    });
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
 
-    // Initial check
-    setTimeout(checkConnection, 500);
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try { handleEvent(JSON.parse(line.slice(6))); }
+        catch (e) { /* skip partial */ }
+      }
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') msg('\n[error] ' + e.message + '\n', 'error');
+  } finally {
+    s.generating = false;
+    $('send-btn').textContent = 'Send';
+    $('send-btn').disabled = false;
+    s.controller = null;
+  }
+}
+
+function handleEvent(ev) {
+  switch (ev.type) {
+    case 'token': if (ev.text) msg(ev.text, 'token'); break;
+    case 'tool_use':
+      msg('tool_use: ' + (ev.tool || '?'), 'tool');
+      if (ev.input) msg('\n' + JSON.stringify(ev.input, null, 2) + '\n', 'system');
+      break;
+    case 'tool_result': msg('tool_result', 'event'); break;
+    case 'image': addImage(ev.b64, ev.format, ev.revised_prompt, ev.index); break;
+    case 'done': msg('done', 'event'); break;
+    case 'error': msg('\n[error] ' + (ev.message || '?') + '\n', 'error'); break;
+    case 'system': console.debug('[agent]', ev.message); break;
+  }
+}
+
+// ── Image ──
+
+function addImage(b64, fmt, revised, idx) {
+  const gal = $('image-gallery');
+  const ld = gal.querySelector('.image-loading');
+  if (ld) ld.remove();
+
+  const card = document.createElement('div');
+  card.className = 'image-card';
+  const img = document.createElement('img');
+  img.src = 'data:image/' + fmt + ';base64,' + b64;
+  img.alt = revised || 'gen';
+  card.appendChild(img);
+  const act = document.createElement('div');
+  act.className = 'image-actions';
+  act.innerHTML = '<span>#' + ((idx || 0) + 1) + '</span>';
+  const dl = document.createElement('a');
+  dl.href = img.src;
+  dl.download = 'image_' + Date.now() + '_' + (idx || 0) + '.' + fmt;
+  dl.textContent = '⬇';
+  act.appendChild(dl);
+  card.appendChild(act);
+  gal.prepend(card);
+}
+
+async function generateImage() {
+  const prompt = $('img-prompt').value.trim();
+  if (!prompt) return;
+
+  const gal = $('image-gallery');
+  const ld = document.createElement('div');
+  ld.className = 'image-loading';
+  ld.innerHTML = '<div class="spinner"></div> Generating...';
+  gal.prepend(ld);
+  const btn = $('img-generate-btn');
+  btn.textContent = 'Generating';
+  btn.disabled = true;
+
+  try {
+    const res = await fetch(url('/image/generate'), {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({
+        prompt,
+        size: $('img-size').value,
+        quality: $('img-quality').value,
+        n: parseInt($('img-n').value) || 1,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'HTTP ' + res.status);
+    }
+    const data = await res.json();
+    if (ld.parentNode) ld.remove();
+    (data.images || []).forEach((img, i) => addImage(img.b64, img.format, img.revised_prompt, i));
+    $('img-prompt').value = '';
+  } catch (e) {
+    if (ld.parentNode) ld.remove();
+    const errDiv = document.createElement('div');
+    errDiv.className = 'image-loading';
+    errDiv.style.color = 'var(--red)';
+    errDiv.textContent = 'Error: ' + e.message;
+    gal.prepend(errDiv);
+  } finally {
+    btn.textContent = 'Generate';
+    btn.disabled = false;
+  }
+}
+
+async function interrupt() {
+  if (!s.generating) return;
+  msg('\n[interrupt]\n', 'system');
+  try { await fetch(url('/interrupt'), { method: 'POST', headers: headers() }); }
+  catch (e) { msg('[error] ' + e.message + '\n', 'error'); }
+}
+
+// ── Events ──
+
+document.querySelectorAll('.tab-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    $('tab-' + b.dataset.tab).classList.add('active');
+  });
+});
+
+$('connect-btn').addEventListener('click', checkConnection);
+$('diagnostics-btn').addEventListener('click', runDiagnostics);
+$('send-btn').addEventListener('click', sendPrompt);
+$('interrupt-btn').addEventListener('click', interrupt);
+$('clear-btn').addEventListener('click', () => { $('messages').innerHTML = ''; });
+$('prompt-input').addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') sendPrompt(); });
+$('endpoint-select').addEventListener('change', () => {
+  const full = $('endpoint-select').value === '/chat';
+  $('system-prompt').disabled = !full;
+  $('system-prompt').placeholder = full ? 'Optional system prompt...' : '(chat only)';
+});
+$('img-generate-btn').addEventListener('click', generateImage);
+$('img-clear-btn').addEventListener('click', () => { $('image-gallery').innerHTML = ''; });
+$('img-prompt').addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') generateImage(); });
+$('system-prompt').disabled = false;
+
+setTimeout(checkConnection, 500);
 </script>
 </body>
 </html>

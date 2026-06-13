@@ -36,7 +36,7 @@ load_dotenv()
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from acople import (
@@ -91,6 +91,16 @@ def _normalize_content(content) -> str:
     s = str(content).strip()
     s = s.replace("\r\n", "\n")
     return s
+
+def _estimate_tokens(text: str) -> int:
+    """Estima tokens de un texto (approx 4 chars/token)."""
+    return max(1, len(text) // 4)
+
+
+def _openai_error(message: str, type_: str = "server_error", code: str | None = None) -> dict:
+    """Forma canónica de error OpenAI (I9)."""
+    return {"error": {"message": message, "type": type_, "param": None, "code": code}}
+
 
 def _tool_use_to_openai(event_data: dict, index: int) -> dict:
     """Convert a BridgeEvent(TOOL_USE) payload into OpenAI tool_call shape."""
@@ -183,6 +193,55 @@ def _extract_json_payload(text: str) -> str:
     return best if best is not None else text.strip()
 
 
+def _render_queue(queue: list[dict]) -> str:
+    """Renderiza la cola desde el último user para agentes plain-text.
+
+    - user: contenido crudo
+    - assistant: contenido crudo
+    - tool_use: ``[Llamaste a "{name}" con: {input}]``
+    - tool_result: ``[Resultado de "{name}": {output}]`` (correlacionado por
+      ``tool_call_id`` → ``name`` de los ``tool_use`` en la misma cola)
+    """
+    id_to_name: dict[str, str] = {}
+    for m in queue:
+        if m.get("role") == "tool_use":
+            try:
+                data = json.loads(m.get("content", "{}"))
+                tid = data.get("id")
+                if tid:
+                    id_to_name[tid] = data.get("name", "")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    parts: list[str] = []
+    for m in queue:
+        role = m.get("role", "")
+        content = m.get("content", "")
+        if role == "user":
+            parts.append(content)
+        elif role == "assistant":
+            parts.append(content)
+        elif role == "tool_use":
+            try:
+                data = json.loads(content)
+                name = data.get("name", "?")
+                inp = data.get("input", {})
+                inp_str = json.dumps(inp, ensure_ascii=False)
+                parts.append(f'[Llamaste a "{name}" con: {inp_str}]')
+            except (json.JSONDecodeError, TypeError):
+                parts.append(content)
+        elif role == "tool_result":
+            try:
+                data = json.loads(content)
+                tid = data.get("tool_call_id", "")
+                output = data.get("output", "")
+                name = id_to_name.get(tid, tid)
+                parts.append(f'[Resultado de "{name}": {output}]')
+            except (json.JSONDecodeError, TypeError):
+                parts.append(content)
+    return "\n".join(parts)
+
+
 def _build_agent_prompt(
     *,
     messages: list[dict],
@@ -190,6 +249,7 @@ def _build_agent_prompt(
     sys_prompt_text: str,
     tool_catalog: str,
     stream_format: str,
+    tool_choice: str | dict | None = None,
 ) -> str:
     """Construye el prompt final que recibe el agente subyacente.
 
@@ -198,25 +258,68 @@ def _build_agent_prompt(
     - resto (opencode, gemini, codex, kilo, qwen): el ``compiled_prompt`` trae
       prefijos "User:"/"Assistant:" y todo el historial, lo que confunde al
       modelo (responde al contexto histórico en vez de a la tarea actual). Le
-      enviamos solo el último turno del usuario PERO conservando el system: ahí
-      viven las instrucciones de la tarea y el esquema JSON. Descartarlo (como
-      hacía la versión anterior) dejaba al modelo sin saber qué producir.
+      enviamos la cola desde el último mensaje ``user`` hasta el final: ahí
+      pueden venir ``tool_use`` y ``tool_result`` del turno actual. El system
+      se conserva porque ahí viven las instrucciones de la tarea y el esquema.
     """
     if stream_format == "json":
         return compiled_prompt
 
-    raw_last = next(
-        (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"),
-        compiled_prompt,
-    )
-    head = f"{sys_prompt_text}\n\n" if sys_prompt_text else ""
-    return f"{head}{tool_catalog}{raw_last}"
+    last_user_idx = -1
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            last_user_idx = i
+            break
+
+    if last_user_idx == -1:
+        # Sin user no hay cola que renderizar. compiled_prompt ya trae system,
+        # catálogo y hint inyectados aguas arriba: devolverlo tal cual evita
+        # duplicar el catálogo al re-añadir el head.
+        return compiled_prompt
+
+    body = _render_queue(messages[last_user_idx:])
+
+    choice_hint = ""
+    if tool_catalog:
+        if isinstance(tool_choice, str) and tool_choice in ("required", "auto", "none"):
+            choice_hint = f"\nTool selection policy: {tool_choice}."
+        elif isinstance(tool_choice, dict) and tool_choice.get("function", {}).get("name"):
+            choice_hint = f"\nThe client requests you call: {tool_choice['function']['name']}."
+
+    head_parts: list[str] = []
+    if sys_prompt_text:
+        head_parts.append(sys_prompt_text)
+    if tool_catalog:
+        head_parts.append(tool_catalog.rstrip("\n"))
+    if choice_hint:
+        head_parts.append(choice_hint.strip())
+    head = "\n\n".join(head_parts)
+    return f"{head}\n\n{body}" if head else body
 
 
 _DEFAULT_AGENT: str | None = None
 _session_manager = None
 ACTIVE_PROCESSES: dict[str, asyncio.subprocess.Process] = {}
+# Mapa process_pid (uuid interno) → session_id de la request que lo lanzó.
+# Permite que /interrupt?session_id=... siga funcionando tras el desacople
+# de process_pid (F10): el cliente conoce su session_id, no el uuid interno.
+PROCESS_SESSIONS: dict[str, str | None] = {}
 MAX_CONCURRENT = int(os.environ.get("ACOPLE_MAX_CONCURRENT", "5"))
+
+# Loop-guard state: per-session record of the last emitted tool sequence.
+# Key = session_id, value = list of (tool, input) pairs from the previous turn.
+# Acotado a _MAX_TOOL_HISTORY_SESSIONS entradas (evicción FIFO) para que el
+# dict no crezca sin límite con session_ids de un solo uso.
+_session_tool_history: dict[str, list[tuple[str, str]]] = {}
+_MAX_TOOL_HISTORY_SESSIONS = 256
+
+
+def _tool_use_key(event_data: dict) -> tuple[str, str]:
+    """Normalize a tool_use event into a comparable (tool, input) pair."""
+    tool = event_data.get("tool", "")
+    inp = event_data.get("input", {})
+    inp_str = json.dumps(inp, sort_keys=True, ensure_ascii=False)
+    return (tool, inp_str)
 
 
 @asynccontextmanager
@@ -283,10 +386,10 @@ app = FastAPI(
     dependencies=[Depends(verify_api_key)],
 )
 
-_cors_origins = os.environ.get("ACOPLE_CORS_ORIGINS", "http://localhost:*").split(",")
+_cors_origin_regex = os.environ.get("ACOPLE_CORS_ORIGINS", r"^https?://localhost(:\d+)?$")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_cors_origins,
+    allow_origin_regex=_cors_origin_regex,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "X-API-Key", "Authorization", "X-Session-ID", "X-Session-Options", "X-Acople-Cwd"],
 )
@@ -569,7 +672,21 @@ async def _unified_chat_workflow(
 
     # 3. Ejecución del Agente
     active = Acople(agent_name)
-    process_pid = final_session_id
+    process_pid = str(uuid.uuid4())
+
+    # Compute registered tool names for proxy-mode termination
+    _registered_tool_names: set[str] = set()
+    for _t in tools or []:
+        if not isinstance(_t, dict):
+            continue
+        if _t.get("type") == "function" and isinstance(_t.get("function"), dict):
+            _tn = _t["function"].get("name", "")
+        else:
+            _tn = _t.get("name", "")
+        if _tn:
+            _registered_tool_names.add(_tn)
+    _proxy_mode = bool(_registered_tool_names)
+    _tool_call_emitted = False
 
     agent_prompt = _build_agent_prompt(
         messages=messages,
@@ -577,30 +694,114 @@ async def _unified_chat_workflow(
         sys_prompt_text=sys_prompt_text,
         tool_catalog=tool_catalog,
         stream_format=active.config.stream_format,
+        tool_choice=tool_choice,
     )
 
     def register_proc(p):
         ACTIVE_PROCESSES[process_pid] = p
+        # El session_id ORIGINAL del cliente (es el único que él conoce y puede
+        # pasar a /interrupt); final_session_id solo como fallback (modo
+        # stateful por carpeta). En stateless puro queda un uuid no-matchable,
+        # igual que antes del fix.
+        PROCESS_SESSIONS[process_pid] = session_id or final_session_id
 
     response_content = ""
     captured_tool_uses: list[dict] = []
+    # Referencia explícita al generador del agente: la terminación forzada hace
+    # `break`, y sin un aclose() explícito el finally de Acople.run (que mata el
+    # subprocess) quedaría a merced del finalizador GC de async generators —
+    # asíncrono y sin orden garantizado (I5).
+    agent_stream = active.run(
+        prompt=agent_prompt,
+        cwd=effective_cwd,
+        on_start=register_proc,
+        disable_native_tools=_proxy_mode,
+    )
     try:
-        async for event in active.run(
-            prompt=agent_prompt,
-            cwd=effective_cwd,
-            on_start=register_proc
-        ):
+        async for event in agent_stream:
             if event.type == EventType.TOKEN:
-                response_content += event.data.get("text", "")
+                text = event.data.get("text", "")
+                if _proxy_mode and _tool_call_emitted:
+                    # F6: dos marcadores consecutivos casi siempre llegan
+                    # separados por whitespace ("\n", espacios). Ese separador
+                    # NO significa "el agente sigue": se descarta sin cerrar
+                    # el turno, para no truncar tool calls paralelas.
+                    if not text.strip():
+                        continue
+                    # Texto real tras las tools → terminación forzada. No se
+                    # acumula en response_content: el cliente nunca lo recibió.
+                    yield BridgeEvent(EventType.DONE, {})
+                    break
+                response_content += text
+                yield event
             elif event.type == EventType.TOOL_USE:
+                tool_name = event.data.get("tool", "")
+                if _proxy_mode and tool_name not in _registered_tool_names:
+                    if _tool_call_emitted:
+                        yield BridgeEvent(EventType.DONE, {})
+                        break
+                    continue
+                _tool_call_emitted = True
+
+                # Loop-guard (stateful): SOLO el primer tool_use del turno se
+                # compara con el primero del turno anterior (nombre + args).
+                # Comparar tools posteriores contra prev_first mataba turnos
+                # multi-tool legítimos con orden distinto ([A,B] → [B,A]).
+                # Al dispararse, la entrada se CONSUME (one-shot): una
+                # repetición legítima en el turno siguiente vuelve a pasar;
+                # un bucle real se re-detecta al turno siguiente.
+                # Usa el session_id original (no final_session_id, que en
+                # stateless es un uuid efímero).
+                if _proxy_mode and session_id and not captured_tool_uses:
+                    prev_tools = _session_tool_history.get(session_id)
+                    if prev_tools and _tool_use_key(event.data) == prev_tools[0]:
+                        logger.warning(
+                            "Loop-guard triggered for session %s: "
+                            "agent repeating tool %s",
+                            session_id, tool_name,
+                        )
+                        _session_tool_history.pop(session_id, None)
+                        note = (
+                            "[acople] Loop guard: the agent attempted to repeat "
+                            f'the identical tool call "{tool_name}" from the '
+                            "previous turn; the turn was stopped."
+                        )
+                        response_content += note
+                        yield BridgeEvent(EventType.TOKEN, {"text": note})
+                        yield BridgeEvent(EventType.DONE, {})
+                        break
+
                 captured_tool_uses.append(dict(event.data))
-            yield event
+                yield event
+            else:
+                yield event
 
     except Exception as e:
         logger.error(f"Unified workflow error for {agent_name}: {e}")
         yield BridgeEvent(EventType.ERROR, {"message": str(e)})
+    else:
+        # Store tool sequence for loop-guard (only after clean completion)
+        # Uses original session_id — final_session_id may be ephemeral UUID
+        # in stateless mode, which would pollute the guard with junk keys.
+        if _proxy_mode and session_id and captured_tool_uses:
+            # Re-insertar al final (orden de inserción = orden de uso) y
+            # evictar las sesiones más antiguas si se supera la cota.
+            _session_tool_history.pop(session_id, None)
+            _session_tool_history[session_id] = [
+                _tool_use_key(tu) for tu in captured_tool_uses
+            ]
+            while len(_session_tool_history) > _MAX_TOOL_HISTORY_SESSIONS:
+                _session_tool_history.pop(next(iter(_session_tool_history)))
     finally:
+        # Cierre determinista: ejecuta el finally de Acople.run (cleanup del
+        # subprocess) DENTRO de esta request, antes de liberar el slot de
+        # concurrencia. No-op si el generador ya se agotó.
+        try:
+            await agent_stream.aclose()
+        except Exception as e:
+            logger.warning(f"agent_stream.aclose() failed: {e}")
         ACTIVE_PROCESSES.pop(process_pid, None)
+        PROCESS_SESSIONS.pop(process_pid, None)
         # 4. Persistencia final: texto del assistant y cada tool_use.
         # Solo si usamos memoria (en stateless final_session_id es efímero y la
         # sesión nunca se creó).
@@ -639,12 +840,39 @@ async def openai_compatibility(request: Request):
     full_model = body.get("model", _DEFAULT_AGENT or "claude")
     tools = body.get("tools") or None
     tool_choice = body.get("tool_choice")
+    stream_options = body.get("stream_options")
+    include_usage = isinstance(stream_options, dict) and stream_options.get("include_usage", False)
+
+    # Build the set of tool names the client actually registered so we can
+    # filter out native agent tool calls (bash, read, write, etc.) that the
+    # client never asked for.  Forwarding those causes the client to send back
+    # tool results, which spawns another agent invocation that calls them
+    # again → infinite loop.
+    registered_tool_names: set[str] = set()
+    for _t in tools or []:
+        if not isinstance(_t, dict):
+            continue
+        if _t.get("type") == "function" and isinstance(_t.get("function"), dict):
+            _tn = _t["function"].get("name", "")
+        else:
+            _tn = _t.get("name", "")
+        if _tn:
+            registered_tool_names.add(_tn)
 
     # response_format (estándar OpenAI): si se pide JSON, debemos garantizar
     # que la respuesta sea JSON limpio (sin fences ni prosa alrededor).
     response_format = body.get("response_format")
     rf_type = response_format.get("type") if isinstance(response_format, dict) else None
     json_mode = rf_type in ("json_object", "json_schema")
+    if json_mode and tools:
+        # F7: las tools del cliente tienen precedencia. La directiva JSON
+        # prohíbe usar tools y contradice el catálogo inyectado; aplicar ambas
+        # deja el comportamiento al azar del modelo. Se ignora json_mode.
+        logger.warning(
+            "response_format=%r ignorado: la request registra tools (F7, "
+            "tools tienen precedencia)", rf_type,
+        )
+        json_mode = False
     if json_mode:
         # Reforzar la instrucción al agente además del saneado posterior.
         # Los CLIs agénticos (gemini, codex, kilo) tienden a ignorar un system
@@ -718,14 +946,20 @@ async def openai_compatibility(request: Request):
         except ValidationError:
             logger.warning("X-Acople-Cwd inválido ignorado: %r", client_cwd)
             client_cwd = None
-    else:
+
+    if not client_cwd:
         from acople.bridge import _DEFAULT_CWD
-        effective = _DEFAULT_CWD or Path.cwd()
-        logger.warning(
-            "X-Acople-Cwd no recibido — el agente correrá en %s. "
-            "Configura ACOPLE_DEFAULT_CWD en .env para establecer un directorio por defecto.",
-            effective,
-        )
+        if _DEFAULT_CWD:
+            client_cwd = str(_DEFAULT_CWD)
+        else:
+            import tempfile
+            client_cwd = tempfile.gettempdir()
+            logger.warning(
+                "X-Acople-Cwd no recibido y ACOPLE_DEFAULT_CWD no configurado — "
+                "el agente correrá en el directorio temporal del sistema (%s). "
+                "Configura ACOPLE_DEFAULT_CWD en .env para evitar esto.",
+                client_cwd,
+            )
 
     workflow = _unified_chat_workflow(
         messages=messages,
@@ -744,7 +978,32 @@ async def openai_compatibility(request: Request):
             tool_index = 0
             has_tool_calls = False
             json_buffer = ""  # en json_mode acumulamos tokens para limpiarlos al final
+            completion_text = ""
+            stream_closed = False  # True tras emitir finish_reason + [DONE]
+            prompt_tokens = _estimate_tokens(json.dumps(messages))
+            # Spec OpenAI: todos los chunks de una misma completion comparten
+            # `id` y `created`. Se generan una vez por stream.
+            completion_id = "chatcmpl-" + uuid.uuid4().hex[:12]
+            created = int(time.time())
+
+            def base_chunk() -> dict:
+                return {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": full_model,
+                }
+
             try:
+                # AC4.1: emit delta.role first chunk
+                role_chunk = {
+                    **base_chunk(),
+                    "choices": [{"delta": {"role": "assistant"}, "index": 0, "finish_reason": None}]
+                }
+                if include_usage:
+                    role_chunk["usage"] = None
+                yield f"data: {json.dumps(role_chunk)}\n\n"
+
                 async for event in workflow:
                     if event.type == EventType.TOKEN:
                         text = event.data.get("text", "")
@@ -753,56 +1012,104 @@ async def openai_compatibility(request: Request):
                             # fences/prosa parciales. Se sanea y emite en DONE.
                             json_buffer += text
                             continue
+                        completion_text += text
                         chunk = {
-                            "id": "chatcmpl-" + uuid.uuid4().hex[:12],
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": full_model,
+                            **base_chunk(),
                             "choices": [{"delta": {"content": text}, "index": 0, "finish_reason": None}]
                         }
+                        if include_usage:
+                            chunk["usage"] = None
                         yield f"data: {json.dumps(chunk)}\n\n"
                     elif event.type == EventType.TOOL_USE:
+                        tool_name = event.data.get("tool", "")
+                        # I4: suprimir tools nativas del agente (bash, read,
+                        # write…) que el cliente nunca registró. Aplica TAMBIÉN
+                        # cuando no hay tools registradas: un cliente OpenAI sin
+                        # `tools` jamás debe recibir tool_calls (ni heredar
+                        # finish_reason=tool_calls de tools nativas).
+                        if tool_name not in registered_tool_names:
+                            continue
                         has_tool_calls = True
                         tool_call = _tool_use_to_openai(event.data, tool_index)
                         tool_index += 1
+                        tool_args_text = tool_call.get("function", {}).get("arguments", "")
+                        completion_text += tool_args_text
                         chunk = {
-                            "id": "chatcmpl-" + uuid.uuid4().hex[:12],
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": full_model,
+                            **base_chunk(),
                             "choices": [{"delta": {"tool_calls": [tool_call]}, "index": 0, "finish_reason": None}]
                         }
+                        if include_usage:
+                            chunk["usage"] = None
                         yield f"data: {json.dumps(chunk)}\n\n"
                     elif event.type == EventType.DONE:
                         if json_mode and json_buffer:
                             cleaned = _extract_json_payload(json_buffer)
+                            completion_text += cleaned
                             content_chunk = {
-                                "id": "chatcmpl-" + uuid.uuid4().hex[:12],
-                                "object": "chat.completion.chunk",
-                                "created": int(time.time()),
-                                "model": full_model,
+                                **base_chunk(),
                                 "choices": [{"delta": {"content": cleaned}, "index": 0, "finish_reason": None}]
                             }
+                            if include_usage:
+                                content_chunk["usage"] = None
                             yield f"data: {json.dumps(content_chunk)}\n\n"
                         finish_reason = "tool_calls" if has_tool_calls else "stop"
                         chunk = {
-                            "id": "chatcmpl-" + uuid.uuid4().hex[:12],
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": full_model,
+                            **base_chunk(),
                             "choices": [{"delta": {}, "index": 0, "finish_reason": finish_reason}]
                         }
+                        if include_usage:
+                            chunk["usage"] = None
                         yield f"data: {json.dumps(chunk)}\n\n"
+
+                        if include_usage:
+                            completion_tokens = _estimate_tokens(completion_text)
+                            usage_chunk = {
+                                **base_chunk(),
+                                "choices": [],
+                                "usage": {
+                                    "prompt_tokens": prompt_tokens,
+                                    "completion_tokens": completion_tokens,
+                                    "total_tokens": prompt_tokens + completion_tokens,
+                                }
+                            }
+                            yield f"data: {json.dumps(usage_chunk)}\n\n"
+
                         yield "data: [DONE]\n\n"
+                        stream_closed = True
                     elif event.type == EventType.ERROR:
                         logger.error("SSE adapter received error event: %s", event.data.get("message", ""))
-                        yield f"data: {json.dumps({'error': event.data})}\n\n"
+                        yield f"data: {json.dumps(_openai_error(event.data.get('message', 'Unknown error')))}\n\n"
                     else:
                         logger.debug("SSE adapter ignoring unhandled event: %s", event.type)
+
+                # I2 (cable): si el workflow se agotó sin DONE (p.ej. error
+                # temprano), cerramos igualmente con finish_reason + [DONE]
+                # para que un cliente OpenAI estricto nunca quede colgado.
+                if not stream_closed:
+                    chunk = {
+                        **base_chunk(),
+                        "choices": [{
+                            "delta": {},
+                            "index": 0,
+                            "finish_reason": "tool_calls" if has_tool_calls else "stop",
+                        }]
+                    }
+                    if include_usage:
+                        chunk["usage"] = None
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                    yield "data: [DONE]\n\n"
             except Exception as e:
                 logger.error(f"SSE Adapter error: {e}")
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                yield f"data: {json.dumps(_openai_error(str(e)))}\n\n"
                 yield "data: [DONE]\n\n"
+            finally:
+                # I5: si el cliente desconecta a mitad de stream, cerrar el
+                # workflow aquí (y no en el GC) para que el subprocess muera
+                # dentro de la request.
+                try:
+                    await workflow.aclose()
+                except Exception:
+                    pass
         
         return StreamingResponse(
             sse_adapter(), 
@@ -813,24 +1120,36 @@ async def openai_compatibility(request: Request):
         full_response = ""
         collected_tool_calls: list[dict] = []
         error_message: str | None = None
-        async for event in workflow:
-            if event.type == EventType.TOKEN:
-                full_response += event.data.get("text", "")
-            elif event.type == EventType.TOOL_USE:
-                tc = _tool_use_to_openai(event.data, len(collected_tool_calls))
-                tc.pop("index", None)
-                collected_tool_calls.append(tc)
-            elif event.type == EventType.ERROR:
-                error_message = event.data.get("message", "Unknown error")
-                logger.error("OpenAI non-streaming error: %s", error_message)
-                break
-            elif event.type == EventType.DONE:
-                pass  # natural end
-            else:
-                logger.debug("OpenAI non-streaming ignoring event: %s", event.type)
+        try:
+            async for event in workflow:
+                if event.type == EventType.TOKEN:
+                    full_response += event.data.get("text", "")
+                elif event.type == EventType.TOOL_USE:
+                    tool_name = event.data.get("tool", "")
+                    # I4: igual que en streaming — sin registro, sin tool_calls.
+                    if tool_name not in registered_tool_names:
+                        continue
+                    tc = _tool_use_to_openai(event.data, len(collected_tool_calls))
+                    tc.pop("index", None)
+                    collected_tool_calls.append(tc)
+                elif event.type == EventType.ERROR:
+                    error_message = event.data.get("message", "Unknown error")
+                    logger.error("OpenAI non-streaming error: %s", error_message)
+                    break
+                elif event.type == EventType.DONE:
+                    pass  # natural end
+                else:
+                    logger.debug("OpenAI non-streaming ignoring event: %s", event.type)
+        finally:
+            # I5: el break en ERROR abandona el workflow a medias — cerrarlo
+            # aquí garantiza el cleanup del subprocess dentro de la request.
+            try:
+                await workflow.aclose()
+            except Exception:
+                pass
 
         if error_message:
-            raise HTTPException(status_code=502, detail=error_message)
+            return JSONResponse(status_code=502, content=_openai_error(error_message))
 
         content = full_response or None
         if json_mode and full_response:
@@ -839,6 +1158,11 @@ async def openai_compatibility(request: Request):
         message: dict = {"role": "assistant", "content": content}
         if collected_tool_calls:
             message["tool_calls"] = collected_tool_calls
+
+        prompt_text = json.dumps(messages)
+        prompt_tokens = _estimate_tokens(prompt_text)
+        completion_content = content or ""
+        completion_tokens = _estimate_tokens(completion_content)
 
         return {
             "id": "chatcmpl-" + uuid.uuid4().hex[:12],
@@ -849,7 +1173,12 @@ async def openai_compatibility(request: Request):
                 "message": message,
                 "index": 0,
                 "finish_reason": "tool_calls" if collected_tool_calls else "stop"
-            }]
+            }],
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            }
         }
 
 
@@ -888,20 +1217,28 @@ def interrupt(session_id: str | None = None):
         return {"ok": True, "message": "No hay procesos activos"}
 
     if session_id:
-        proc = ACTIVE_PROCESSES.get(session_id)
-        if not proc:
+        # Tras el desacople F10, ACTIVE_PROCESSES se indexa por un uuid interno
+        # que el cliente no conoce. Se resuelve vía PROCESS_SESSIONS (sesión de
+        # la request que lanzó cada proceso); se acepta también el uuid crudo.
+        targets = [
+            (pid, proc) for pid, proc in list(ACTIVE_PROCESSES.items())
+            if pid == session_id or PROCESS_SESSIONS.get(pid) == session_id
+        ]
+        if not targets:
             raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
-        try:
-            if proc.returncode is None:
-                if sys.platform == "win32":
-                    proc.terminate()
-                else:
-                    import signal as _signal
-                    proc.send_signal(_signal.SIGINT)
-            return {"ok": True, "interrupted": 1}
-        except Exception as e:
-            logger.error(f"Error interrumpiendo {session_id}: {e}")
-            raise HTTPException(status_code=500, detail="Error interrumpiendo proceso")
+        interrupted = 0
+        for pid, proc in targets:
+            try:
+                if proc.returncode is None:
+                    if sys.platform == "win32":
+                        proc.terminate()
+                    else:
+                        import signal as _signal
+                        proc.send_signal(_signal.SIGINT)
+                    interrupted += 1
+            except Exception as e:
+                logger.error(f"Error interrumpiendo {pid} ({session_id}): {e}")
+        return {"ok": True, "interrupted": interrupted}
 
     count = 0
     for sid, proc in list(ACTIVE_PROCESSES.items()):

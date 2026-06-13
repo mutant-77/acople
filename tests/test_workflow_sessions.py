@@ -18,7 +18,7 @@ def _make_fake_acople(stream_format: str, capture: dict):
             self.agent_name = agent_name
             self.config = type("Cfg", (), {"stream_format": stream_format})()
 
-        async def run(self, prompt, cwd=None, on_start=None):
+        async def run(self, prompt, cwd=None, on_start=None, disable_native_tools=False):
             capture["prompt"] = prompt
             capture["cwd"] = cwd
             yield BridgeEvent(EventType.TOKEN, {"text": '{"ok": true}'})

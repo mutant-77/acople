@@ -205,3 +205,123 @@ class TestTimeout:
             # Should have a timeout error event
             error_events = [e for e in events if e.type == EventType.ERROR]
             assert len(error_events) >= 1
+
+
+class TestTimeoutF12:
+    """F12: timeout y MAX_DURATION simultáneos — gana el menor."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_fires_before_max_duration(self):
+        """timeout < max_duration: ERROR dice 'Timeout after Ns', no 'max duration'."""
+        import os
+        import time
+        from acople.bridge import Acople, EventType
+
+        os.environ["ACOPLE_STREAM_IDLE_TIMEOUT"] = "10"
+        os.environ["ACOPLE_STREAM_MAX_DURATION"] = "10"
+        try:
+            with patch("acople.bridge.shutil.which", return_value="/fake/claude"):
+                bridge = Acople("claude")
+
+            proc = MagicMock()
+            proc.pid = 42
+            proc.returncode = None
+            proc.stderr = AsyncMock(return_value=b"")
+            proc.stderr.read = AsyncMock(return_value=b"")
+
+            async def silent(_n):
+                await asyncio.sleep(3600)
+
+            proc.stdout = MagicMock()
+            proc.stdout.read = silent
+
+            start = time.time()
+            events = [e async for e in bridge._read_stream(proc, timeout=0.3)]
+            elapsed = time.time() - start
+
+            errors = [e for e in events if e.type == EventType.ERROR]
+            assert len(errors) == 1
+            msg = errors[0].data.get("message", "")
+            assert "Timeout after" in msg
+            assert "max duration" not in msg.lower()
+            assert elapsed < 2, f"should finish in ~0.3s, took {elapsed:.2f}s"
+        finally:
+            os.environ.pop("ACOPLE_STREAM_IDLE_TIMEOUT", None)
+            os.environ.pop("ACOPLE_STREAM_MAX_DURATION", None)
+
+    @pytest.mark.asyncio
+    async def test_max_duration_fires_before_timeout(self):
+        """max_duration < timeout: ERROR dice 'max duration exceeded', no timeout message."""
+        import os
+        import time
+        from acople.bridge import Acople, EventType
+
+        os.environ["ACOPLE_STREAM_IDLE_TIMEOUT"] = "10"
+        os.environ["ACOPLE_STREAM_MAX_DURATION"] = "1"
+        try:
+            with patch("acople.bridge.shutil.which", return_value="/fake/claude"):
+                bridge = Acople("claude")
+
+            proc = MagicMock()
+            proc.pid = 42
+            proc.returncode = None
+            proc.stderr = AsyncMock(return_value=b"")
+            proc.stderr.read = AsyncMock(return_value=b"")
+
+            async def silent(_n):
+                await asyncio.sleep(3600)
+
+            proc.stdout = MagicMock()
+            proc.stdout.read = silent
+
+            start = time.time()
+            events = [e async for e in bridge._read_stream(proc, timeout=60)]
+            elapsed = time.time() - start
+
+            errors = [e for e in events if e.type == EventType.ERROR]
+            assert len(errors) == 1
+            msg = errors[0].data.get("message", "")
+            assert "max duration" in msg.lower()
+            assert "Timeout after" not in msg
+            assert elapsed < 3, f"should finish in ~1s, took {elapsed:.2f}s"
+        finally:
+            os.environ.pop("ACOPLE_STREAM_IDLE_TIMEOUT", None)
+            os.environ.pop("ACOPLE_STREAM_MAX_DURATION", None)
+
+    @pytest.mark.asyncio
+    async def test_no_timeout_behavior_unchanged(self):
+        """Sin timeout: comportamiento idéntico al original — tokens + DONE."""
+        from acople.bridge import Acople, EventType
+
+        with patch("acople.bridge.shutil.which", return_value="/fake/claude"):
+            bridge = Acople("claude")
+
+        proc = MagicMock()
+        proc.pid = 42
+        proc.returncode = None
+        proc.stderr = AsyncMock(return_value=b"")
+        proc.stderr.read = AsyncMock(return_value=b"")
+
+        import io
+
+        chunks = [
+            b'{"type":"assistant","message":{"content":[{"type":"text","text":"OK"}]}}\n',
+            b'{"type":"result","subtype":"success","result":"ok"}\n',
+            b"",
+        ]
+        idx = 0
+
+        async def chunked_read(_n):
+            nonlocal idx
+            chunk = chunks[idx]
+            idx += 1
+            return chunk
+
+        proc.stdout = MagicMock()
+        proc.stdout.read = chunked_read
+
+        events = [e async for e in bridge._read_stream(proc)]
+        tokens = [e for e in events if e.type == EventType.TOKEN]
+        assert any(e.type == EventType.DONE for e in events)
+        assert len(tokens) >= 1
+        assert tokens[0].data.get("text", "").strip() == "OK"

@@ -62,6 +62,7 @@ class AgentConfig:
     stream_format: str
     extra_env: dict = field(default_factory=dict)
     max_chars: int = 50_000
+    no_tools_args: list[str] = field(default_factory=list)
 
 
 AGENT_CONFIGS: dict[str, AgentConfig] = {
@@ -71,29 +72,30 @@ AGENT_CONFIGS: dict[str, AgentConfig] = {
         prompt_flag="--print",
         stream_format="json",
         max_chars=20_000,
+        no_tools_args=["--tools", ""],
     ),
     "gemini": AgentConfig(
         bin="gemini",
         args=["--skip-trust"],
-        prompt_flag=None,   # None = use stdin
+        prompt_flag=None,
         stream_format="plain",
     ),
     "codex": AgentConfig(
         bin="codex",
         args=["exec", "--skip-git-repo-check"],
-        prompt_flag=None,   # None = use stdin
+        prompt_flag=None,
         stream_format="plain",
     ),
     "opencode": AgentConfig(
         bin="opencode",
         args=["run", "--format", "json", "--dangerously-skip-permissions"],
-        prompt_flag=None,   # None = use stdin
+        prompt_flag=None,
         stream_format="opencode-json",
     ),
     "kilo": AgentConfig(
         bin="kilo",
         args=["run", "--format", "json", "--auto"],
-        prompt_flag=None,   # None = use stdin (fork of opencode, same behavior)
+        prompt_flag=None,
         stream_format="opencode-json",
     ),
     "qwen": AgentConfig(
@@ -367,6 +369,7 @@ class AsyncProcessProxy:
         self._t_err.daemon = True
         self._t_out.start()
         self._t_err.start()
+        self._stdin_proxy = self._StdinProxy(proc.stdin)
 
     def _reader(self, pipe, queue):
         try:
@@ -403,6 +406,31 @@ class AsyncProcessProxy:
         async def read(self, n=None):
             return await self.queue.get()
 
+    class _StdinProxy:
+        """Async stdin proxy for subprocess.Popen: buffers writes, flushes via thread (D8)."""
+        def __init__(self, pipe):
+            self._pipe = pipe
+            self._buf = bytearray()
+
+        def write(self, data: bytes) -> None:
+            self._buf += data
+
+        async def drain(self) -> None:
+            buf = bytes(self._buf)
+            self._buf.clear()
+            if buf:
+                pipe = self._pipe
+                await asyncio.to_thread(lambda: (pipe.write(buf), pipe.flush()))
+
+        def close(self) -> None:
+            try:
+                self._pipe.close()
+            except Exception:
+                pass
+
+        async def wait_closed(self) -> None:
+            pass
+
     @property
     def stdout(self):
         return self._StreamProxy(self.stdout_queue)
@@ -410,6 +438,10 @@ class AsyncProcessProxy:
     @property
     def stderr(self):
         return self._StreamProxy(self.stderr_queue)
+
+    @property
+    def stdin(self):
+        return self._stdin_proxy
 
 
 # ---------------------------------------------------------------------------
@@ -464,10 +496,12 @@ class Acople:
 
         return path
 
-    def _build_cmd(self, prompt: str) -> list[str]:
+    def _build_cmd(self, prompt: str, disable_native_tools: bool = False) -> list[str]:
         cfg = self.config
         bin_cmd = self._resolve_bin(cfg.bin)
         cmd = [bin_cmd] + cfg.args
+        if disable_native_tools and cfg.no_tools_args:
+            cmd += cfg.no_tools_args
 
         # prompt_flag semantics:
         #   None  → use stdin
@@ -498,13 +532,14 @@ class Acople:
         system: str | None = None,
         timeout: float | None = None,
         on_start: Callable[[asyncio.subprocess.Process], None] | None = None,
+        disable_native_tools: bool = False,
     ) -> AsyncIterator[BridgeEvent]:
         start_time = time.time()
         proc = None
         try:
             self.validate_binary()
             full_prompt = f"{system}\n\n{prompt}" if system else prompt
-            cmd = self._build_cmd(full_prompt)
+            cmd = self._build_cmd(full_prompt, disable_native_tools=disable_native_tools)
             work_dir = Path(cwd) if cwd else (_DEFAULT_CWD or Path.cwd())
 
             logger.info(f"Starting agent: {self.agent_name}")
@@ -554,23 +589,23 @@ class Acople:
             err_details = traceback.format_exc()
             logger.error(f"Failed to start: {err_details}")
             yield BridgeEvent(EventType.ERROR, {"message": f"Failed to start: {repr(e)}"})
+            # I2: el stream de eventos SIEMPRE termina en DONE, incluso si el
+            # arranque falla — los adapters de cable necesitan un terminal
+            # para cerrar con finish_reason + [DONE].
+            yield BridgeEvent(EventType.DONE, {})
             return
 
+        done_yielded = False
         try:
-            if timeout:
-                deadline = asyncio.get_event_loop().time() + timeout
-                async for event in self._read_stream(proc):
-                    yield event
-                    if asyncio.get_event_loop().time() > deadline:
-                        raise asyncio.TimeoutError()
-            else:
-                async for event in self._read_stream(proc):
-                    yield event
-        except asyncio.TimeoutError:
-            yield BridgeEvent(EventType.ERROR, {"message": f"Timeout after {timeout}s"})
+            async for event in self._read_stream(proc, timeout=timeout):
+                if event.type == EventType.DONE:
+                    done_yielded = True
+                yield event
         except Exception as e:
             logger.error(f"Error: {e}")
             yield BridgeEvent(EventType.ERROR, {"message": str(e)})
+            if not done_yielded:
+                yield BridgeEvent(EventType.DONE, {})
         finally:
             if proc:
                 await self._cleanup_process(proc)
@@ -615,18 +650,47 @@ class Acople:
         except Exception as e:
             logger.error(f"Cleanup error for {proc.pid}: {e}")
 
-    async def _read_stream(self, proc: asyncio.subprocess.Process) -> AsyncIterator[BridgeEvent]:
+    async def _read_stream(
+        self,
+        proc: asyncio.subprocess.Process,
+        timeout: float | None = None,
+    ) -> AsyncIterator[BridgeEvent]:
         from acople.normalize import parse_plain_tool_markers
+        _idle_timeout = int(os.environ.get("ACOPLE_STREAM_IDLE_TIMEOUT", "300"))
+        _max_duration = int(os.environ.get("ACOPLE_STREAM_MAX_DURATION", "1800"))
+        stream_start = time.time()
         cfg = self.config
         buffer = ""
         done_emitted = False
+        text_marker_buffer = ""
 
         while True:
+            elapsed = time.time() - stream_start
+            if elapsed > _max_duration:
+                yield BridgeEvent(EventType.ERROR, {"message": "max duration exceeded"})
+                break
+
+            # run(timeout=) deadline — checked before each read so it fires even
+            # if the agent never produces a single byte (F11).
+            if timeout is not None and elapsed >= timeout:
+                yield BridgeEvent(EventType.ERROR, {"message": f"Timeout after {timeout}s"})
+                break
+
+            # Cap read by all absolute deadlines so asyncio.wait_for unblocks in
+            # time for the deadline checks above (AC0.2, F11).
+            read_timeout = min(float(_idle_timeout), max(0.1, _max_duration - elapsed))
+            if timeout is not None:
+                read_timeout = min(read_timeout, max(0.1, timeout - elapsed))
             try:
-                # Timeout protector para evitar bloqueos infinitos si el agente se cuelga
-                chunk_bytes = await asyncio.wait_for(proc.stdout.read(4096), timeout=30.0)
+                chunk_bytes = await asyncio.wait_for(proc.stdout.read(4096), timeout=read_timeout)
             except asyncio.TimeoutError:
-                logger.warning(f"No output from process {proc.pid} for 30s")
+                if getattr(proc, 'returncode', None) is None:
+                    logger.warning(
+                        "No output from process %s for %ss, but process alive",
+                        getattr(proc, 'pid', '?'), _idle_timeout,
+                    )
+                    continue
+                logger.warning("Process %s appears dead", getattr(proc, 'pid', '?'))
                 break
 
             if not chunk_bytes:
@@ -652,9 +716,29 @@ class Acople:
                         logger.debug("Dropped unrecognized JSON object (%d bytes)", len(obj_str))
                         continue
                     for event in events:
-                        if event.type == EventType.DONE:
-                            done_emitted = True
-                        yield event
+                        if event.type == EventType.TOKEN:
+                            text_marker_buffer += event.data.get("text", "")
+                            marker_events, text_marker_buffer = parse_plain_tool_markers(
+                                text_marker_buffer, final=False
+                            )
+                            for kind, data in marker_events:
+                                if kind == "tool_use":
+                                    yield BridgeEvent(EventType.TOOL_USE, data)
+                                else:
+                                    yield BridgeEvent(EventType.TOKEN, data)
+                        else:
+                            if text_marker_buffer:
+                                marker_events, text_marker_buffer = parse_plain_tool_markers(
+                                    text_marker_buffer, final=True
+                                )
+                                for kind, data in marker_events:
+                                    if kind == "tool_use":
+                                        yield BridgeEvent(EventType.TOOL_USE, data)
+                                    else:
+                                        yield BridgeEvent(EventType.TOKEN, data)
+                            if event.type == EventType.DONE:
+                                done_emitted = True
+                            yield event
             else:
                 # Plain-text: buffereamos para detectar markers <acople-tool>.
                 buffer += _ANSI_RE.sub("", chunk)
@@ -669,11 +753,19 @@ class Acople:
                     else:
                         yield BridgeEvent(EventType.TOKEN, data)
 
-        if cfg.stream_format in ("json", "opencode-json") and buffer.strip():
-            logger.warning(
-                "Dropping incomplete JSON tail (%d bytes) for PID %s: %r",
-                len(buffer), getattr(proc, 'pid', '?'), buffer[:200],
-            )
+        if cfg.stream_format in ("json", "opencode-json"):
+            if text_marker_buffer:
+                marker_events, _ = parse_plain_tool_markers(text_marker_buffer, final=True)
+                for kind, data in marker_events:
+                    if kind == "tool_use":
+                        yield BridgeEvent(EventType.TOOL_USE, data)
+                    else:
+                        yield BridgeEvent(EventType.TOKEN, data)
+            if buffer.strip():
+                logger.warning(
+                    "Dropping incomplete JSON tail (%d bytes) for PID %s: %r",
+                    len(buffer), getattr(proc, 'pid', '?'), buffer[:200],
+                )
         elif cfg.stream_format not in ("json", "opencode-json") and buffer:
             events, _ = parse_plain_tool_markers(buffer, final=True)
             for kind, data in events:
@@ -694,7 +786,10 @@ class Acople:
                         await asyncio.wait_for(proc.wait(), timeout=2.0)
                     except asyncio.TimeoutError:
                         pass
-                    if proc.returncode is not None and proc.returncode != 0:
+                    # Si el stream ya cerró con DONE, el stderr es ruido de
+                    # apagado: degradarlo a SYSTEM evita emitir ERROR después
+                    # de que el adapter haya cerrado el cable ([DONE]).
+                    if proc.returncode is not None and proc.returncode != 0 and not done_emitted:
                         yield BridgeEvent(EventType.ERROR, {"message": stderr})
                     else:
                         yield BridgeEvent(EventType.SYSTEM, {"message": stderr})

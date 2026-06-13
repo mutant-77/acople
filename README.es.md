@@ -80,18 +80,30 @@ curl -X POST http://localhost:47334/chat/simple \
 
 ---
 
-## Seguridad y Concurrencia 🛡️ (NUEVO)
+## Seguridad y Concurrencia 🛡️
 
-Ahora Acople es apto para producción. Podés configurar estas variables de entorno:
+Acople está listo para producción. Revisá la [`docs/security.md`](docs/security.md) para
+la guía de seguridad completa. Variables de entorno clave:
 
-- `ACOPLE_API_KEY`: Definí una clave secreta para proteger tus endpoints (ej. `export ACOPLE_API_KEY="mi_secreto"`). Pasala en el header `X-API-Key` o como `Authorization: Bearer <clave>`.
-- `ACOPLE_MAX_CONCURRENT`: Límite de sesiones simultáneas para no saturar tu compu (por defecto es `5`).
-- `ACOPLE_CORS_ORIGINS`: Controlá quién puede pegarle a tu API (por defecto `http://localhost:*`).
+- `ACOPLE_API_KEY`: Protegé tus endpoints. Pasala en el header `X-API-Key` o como `Authorization: Bearer <clave>`.
+- `ACOPLE_MAX_CONCURRENT`: Límite de sesiones simultáneas (por defecto `5`).
+- `ACOPLE_CORS_ORIGINS`: Patrón regex de orígenes CORS (por defecto `^https?://localhost(:\d+)?$`).
+- `ACOPLE_DEFAULT_CWD`: Aislá el agente en un directorio dedicado.
+- `ACOPLE_STREAM_IDLE_TIMEOUT` / `ACOPLE_STREAM_MAX_DURATION`: Límites de recursos (por defecto `300s` / `1800s`).
 - `OPENAI_API_KEY`: Requerida para generación de imágenes con `gpt-image-1`.
+
+### Modo Tool-Proxy
+
+Cuando pasás `tools` y `tool_choice` a un endpoint, Acople entra en
+**Modo Tool-Proxy**: las tools nativas del agente (bash/read/write) se
+deshabilitan y el proceso termina forzosamente en cuanto el agente emite una
+tool registrada por el cliente. Esto convierte el function calling en un
+**round-trip stateless seguro**: el cliente ejecuta la tool y devuelve el
+resultado en un nuevo request. Ver [`PLAN.md`](PLAN.md) para detalles.
 
 ---
 
-## Memoria Persistente de Sesión 🧠 (NUEVO)
+## Memoria Persistente de Sesión 🧠
 
 Acople ahora incluye un sistema de persistencia inteligente (**Compactor**) activo por defecto que transforma tus agentes CLI en asistentes con memoria a largo plazo:
 

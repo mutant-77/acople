@@ -1,0 +1,34 @@
+........................................................................ [ 17%]
+........................................................................ [ 34%]
+........................................................................ [ 51%]
+........................................................................ [ 68%]
+........................................................................ [ 86%]
+..........................................................               [100%]
+============================== warnings summary ===============================
+tests/test_bridge_core.py::TestDetectModels::test_agent_timeout_returns_empty
+tests/test_cli.py::TestCmdRun::test_cmd_run_agent_not_found
+  C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py:2181: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    self.name = name
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_cli.py::TestMainDispatch::test_main_detect_dispatches
+  C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py:2135: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    setattr(_type, entry, MagicProxy(entry, self))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_cli.py::TestCmdRun::test_cmd_run_streams_tokens
+  C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py:420: RuntimeWarning: coroutine 'AsyncMockMixin._execute_mock_call' was never awaited
+    bound_args = _MOCK_SIG.bind_partial(cls, *args, **kw).arguments
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_process_lifecycle.py::TestTimeout::test_timeout_yields_error_event
+  C:\Users\jorge\AppData\Local\Programs\Python\Python310\lib\unittest\mock.py:2135: RuntimeWarning: coroutine 'TestCleanup.test_cleanup_escalates_to_kill.<locals>.fake_wait_timeout' was never awaited
+    setattr(_type, entry, MagicProxy(entry, self))
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+418 passed, 5 warnings in 27.06s

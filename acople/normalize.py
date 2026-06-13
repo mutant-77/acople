@@ -43,7 +43,10 @@ TOOL_CLOSE = "</acople-tool>"
 TOOL_CATALOG_INSTRUCTIONS = (
     "When you need to call a tool, emit exactly one block per call:\n"
     f'{TOOL_OPEN}{{"name": "<tool_name>", "arguments": {{...}}}}{TOOL_CLOSE}\n'
-    "Use only registered tool names. Do not wrap the block in code fences."
+    "Use only registered tool names. Do not wrap the block in code fences.\n"
+    "IMPORTANT: Do NOT execute any tool yourself — only emit the marker. "
+    "Do NOT create files, run commands, read files, or perform any action. "
+    "Your only job is to emit the marker above when a tool is needed."
 )
 
 
@@ -367,7 +370,8 @@ def parse_plain_tool_markers(
         try:
             payload = json.loads(payload_str)
         except (json.JSONDecodeError, ValueError):
-            logger.debug("Malformed acople-tool payload: %s", payload_str[:80])
+            # I3: degradación documentada — debe ser visible en logs por defecto.
+            logger.warning("Malformed acople-tool payload treated as text: %s", payload_str[:80])
             events.append(("token", {"text": f"{TOOL_OPEN}{payload_str}{TOOL_CLOSE}"}))
             continue
 

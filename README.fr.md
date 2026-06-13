@@ -81,18 +81,30 @@ curl -X POST http://localhost:47334/chat/simple \
 
 ---
 
-## Sécurité et Concurrence 🛡️ (NOUVEAU)
+## Sécurité et Concurrence 🛡️
 
-Acople est maintenant prêt pour la production. Vous pouvez configurer ces variables d'environnement :
+Acople est prêt pour la production. Consultez [`docs/security.md`](docs/security.md) pour
+le guide de sécurité complet. Variables d'environnement clés :
 
-- `ACOPLE_API_KEY` : Définissez une clé secrète pour protéger vos endpoints (ex. `export ACOPLE_API_KEY="mon_secret"`). Passez-la via l'en-tête `X-API-Key` ou `Authorization: Bearer <clé>`.
-- `ACOPLE_MAX_CONCURRENT` : Limite de sessions simultanées pour ne pas saturer votre ordinateur (par défaut `5`).
-- `ACOPLE_CORS_ORIGINS` : Contrôlez qui peut accéder à votre API (par défaut `http://localhost:*`).
+- `ACOPLE_API_KEY` : Protégez vos endpoints. Passez-la via l'en-tête `X-API-Key` ou `Authorization: Bearer <clé>`.
+- `ACOPLE_MAX_CONCURRENT` : Limite de sessions simultanées (par défaut `5`).
+- `ACOPLE_CORS_ORIGINS` : Expression régulière des origines CORS (par défaut `^https?://localhost(:\d+)?$`).
+- `ACOPLE_DEFAULT_CWD` : Isolez l'agent dans un répertoire dédié.
+- `ACOPLE_STREAM_IDLE_TIMEOUT` / `ACOPLE_STREAM_MAX_DURATION` : Limites de ressources (par défaut `300s` / `1800s`).
 - `OPENAI_API_KEY` : Requise pour la génération d'images avec `gpt-image-1`.
+
+### Mode Tool-Proxy
+
+Lorsque vous passez `tools` et `tool_choice` à un endpoint, Acople entre en
+**Mode Tool-Proxy** : les outils natifs de l'agent (bash/read/write) sont
+désactivés et le processus est terminé de force dès que l'agent émet un appel
+d'outil enregistré par le client. Cela transforme le function calling en un
+**round-trip stateless sécurisé** : le client exécute l'outil et renvoie le
+résultat dans une nouvelle requête. Voir [`PLAN.md`](PLAN.md) pour les détails.
 
 ---
 
-## Mémoire de Session Persistante 🧠 (NOUVEAU)
+## Mémoire de Session Persistante 🧠
 
 Acople inclut désormais un système de persistance intelligent (**Compactor**) activé par défaut, transformant vos agents CLI en assistants dotés d'une mémoire à long terme :
 

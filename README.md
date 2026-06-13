@@ -80,18 +80,30 @@ curl -X POST http://localhost:47334/chat/simple \
 
 ---
 
-## Security and Concurrency 🛡️ (NEW)
+## Security and Concurrency 🛡️
 
-Acople is now production-ready. You can configure these environment variables:
+Acople is production-ready. See [`docs/security.md`](docs/security.md) for the full
+security guide. Key environment variables:
 
-- `ACOPLE_API_KEY`: Define a secret key to protect your endpoints (e.g. `export ACOPLE_API_KEY="my_secret"`). Pass it via the `X-API-Key` header or `Authorization: Bearer <key>`.
-- `ACOPLE_MAX_CONCURRENT`: Limit of simultaneous sessions to avoid saturating your computer (default is `5`).
-- `ACOPLE_CORS_ORIGINS`: Control who can hit your API (default `http://localhost:*`).
+- `ACOPLE_API_KEY`: Protect your endpoints. Pass via `X-API-Key` header or `Authorization: Bearer <key>`.
+- `ACOPLE_MAX_CONCURRENT`: Limit simultaneous sessions (default `5`).
+- `ACOPLE_CORS_ORIGINS`: CORS origin regex pattern (default `^https?://localhost(:\d+)?$`).
+- `ACOPLE_DEFAULT_CWD`: Isolate agent to a dedicated directory.
+- `ACOPLE_STREAM_IDLE_TIMEOUT` / `ACOPLE_STREAM_MAX_DURATION`: Resource limits (defaults `300s` / `1800s`).
 - `OPENAI_API_KEY`: Required for image generation with `gpt-image-1`.
+
+### Tool-Proxy mode
+
+When you pass `tools` and `tool_choice` to an endpoint, Acople enters
+**Tool-Proxy mode**: the agent's native tools (bash/read/write) are disabled and
+the process is forcibly terminated as soon as the agent emits a client-registered
+tool call. This turns function calling into a **safe, stateless round-trip**:
+the client executes the tool and sends back the result in a new request. See
+[`PLAN.md`](PLAN.md) for details.
 
 ---
 
-## Persistent Session Memory 🧠 (NEW)
+## Persistent Session Memory 🧠
 
 Acople now features an intelligent persistence system (**Compactor**) enabled by default, turning your CLI agents into long-term memory assistants:
 

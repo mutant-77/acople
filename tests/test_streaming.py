@@ -372,6 +372,42 @@ class TestBuildAgentPrompt:
         assert "ultimo" in out
         assert "primero" not in out
 
+    def test_round_trip_tool_result_correlated_by_name(self):
+        """AC3.4: tool_result aparece correlacionado por nombre en el prompt."""
+        from acople.server import _build_agent_prompt
+
+        msgs = [
+            {"role": "system", "content": self.SYS},
+            {"role": "user", "content": "crea un archivo"},
+            {"role": "tool_use", "content": '{"id":"call1","name":"Write","input":{"path":"a.txt"}}'},
+            {"role": "tool_result", "content": '{"tool_call_id":"call1","output":"archivo creado"}'},
+        ]
+        out = _build_agent_prompt(
+            messages=msgs,
+            compiled_prompt="ignored",
+            sys_prompt_text=self.SYS,
+            tool_catalog="",
+            stream_format="plain",
+        )
+        assert "[Resultado de \"Write\"" in out, "tool_result debe estar correlacionado por nombre"
+        assert "archivo creado" in out, "output del tool_result debe aparecer"
+        assert "[Llamaste a \"Write\"" in out, "tool_use debe renderizarse"
+        assert "call1" not in out, "id interno no debe filtrarse"
+
+    def test_tool_choice_in_plain_prompt(self):
+        """AC3.5: tool_choice aparece como hint en el prompt plano."""
+        from acople.server import _build_agent_prompt
+
+        out = _build_agent_prompt(
+            messages=self.MSGS,
+            compiled_prompt=self.COMPILED,
+            sys_prompt_text=self.SYS,
+            tool_catalog="TOOLS:\n- search\n\n",
+            stream_format="plain",
+            tool_choice="required",
+        )
+        assert "Tool selection policy: required" in out
+
 
 class TestExtractJSONObjects:
     """Tests de _extract_json_objects (Fix 1: JSON multilínea)"""

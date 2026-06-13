@@ -35,6 +35,11 @@ env/
 acople-server.bat
 acople-web
 
+# Documentos de trabajo local (registro por sesiones)
+PLAN.md
+PLAN2.md
+CLAUDE.md
+
 # SO / Archivos de sistema
 .DS_Store
 Thumbs.db
